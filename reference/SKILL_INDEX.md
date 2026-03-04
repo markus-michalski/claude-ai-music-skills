@@ -35,6 +35,7 @@ Quick-reference guide for finding the right skill for any task.
 | ...run final pre-generation checkpoint | `/pre-generation-check` |
 | ...check if explicit flag is needed | `/explicit-checker` |
 | ...check lyrics for plagiarism | `/plagiarism-checker` |
+| ...check lyrics/prose for AI-sounding patterns | `/voice-checker` |
 
 ### Suno Generation
 | I need to... | Use this skill |
@@ -152,6 +153,7 @@ Quick-reference guide for finding the right skill for any task.
 | [`tutorial`](/skills/tutorial/SKILL.md) | Interactive guided album creation | Learning the workflow step-by-step |
 | [`validate-album`](/skills/validate-album/SKILL.md) | Validate album structure, file locations | Catching path issues before they cause problems |
 | [`verify-sources`](/skills/verify-sources/SKILL.md) | Human source verification gate with timestamps | Verifying sources before generation |
+| [`voice-checker`](/skills/voice-checker/SKILL.md) | Detect AI-written patterns in lyrics and prose | Advisory review for voice authenticity |
 
 ---
 
@@ -165,6 +167,7 @@ What to have ready before using each skill:
 | `/lyric-writer` | Track concept defined, sources captured (if documentary) |
 | `/pronunciation-specialist` | Lyrics written |
 | `/lyric-reviewer` | Lyrics complete, pronunciation checked |
+| `/voice-checker` | Lyrics written, lyric-reviewer passed |
 | `/pre-generation-check` | Lyrics written, pronunciation resolved, style prompt created |
 | `/suno-engineer` | Lyrics written (auto-invoked by lyric-writer) |
 | `/mix-engineer` | WAV files (stems preferred) imported from Suno |
@@ -190,6 +193,7 @@ What to have ready before using each skill:
     -> /lyric-writer (for each track — auto-invokes /suno-engineer)
     -> /pronunciation-specialist (scan for risks)
     -> /lyric-reviewer (final QC)
+    -> /voice-checker (advisory: flag AI-sounding patterns)
     -> /pre-generation-check (validate all gates)
     -> [Generate in Suno]
     -> /mix-engineer (optional: polish raw audio)
@@ -225,6 +229,7 @@ What to have ready before using each skill:
 ```
 /pronunciation-specialist <track>
     -> /lyric-reviewer <track>
+    -> /voice-checker <track> (advisory)
     -> /explicit-checker <album>
     -> /validate-album <album>
 ```
@@ -250,6 +255,7 @@ Natural pairings that complement each other:
 |---------------|-----------------|-----|
 | `/lyric-writer` | `/pronunciation-specialist` | Catch pronunciation issues immediately |
 | `/pronunciation-specialist` | `/lyric-reviewer` | Reviewer verifies pronunciation fixes applied correctly |
+| `/lyric-reviewer` | `/voice-checker` | Reviewer catches craft issues, voice-checker catches authenticity issues |
 | `/lyric-reviewer` | `/pre-generation-check` | Review must pass before generation gate |
 | `/researcher` | `/document-hunter` | Automate document acquisition |
 | `/suno-engineer` | `/clipboard` | Copy prompts directly to Suno |
@@ -257,6 +263,7 @@ Natural pairings that complement each other:
 | `/mastering-engineer` | `/promo-director` | Promo videos need mastered audio |
 | `/promo-director` | `/cloud-uploader` | Upload videos for sharing |
 | `/promo-writer` | `/promo-reviewer` | Generate copy, then polish it |
+| `/promo-writer` | `/voice-checker` | Flag AI tells in promo copy before review |
 | `/promo-writer` | `/promo-director` | Social copy + promo videos for full campaign |
 | `/promo-reviewer` | `/release-director` | Polish copy before release |
 | `/album-conceptualizer` | `/album-art-director` | Visual and sonic vision together |
@@ -291,7 +298,7 @@ Skills are assigned to models based on task complexity. See [model-strategy.md](
 - `/researchers-legal` - Complex legal synthesis
 - `/researchers-verifier` - High-stakes verification
 
-### Sonnet 4.5 (Reasoning & Coordination — 29 skills)
+### Sonnet 4.5 (Reasoning & Coordination — 30 skills)
 - `/album-art-director` - Visual direction
 - `/album-ideas` - Idea brainstorming and organization
 - `/cloud-uploader` - Cloud storage coordination
@@ -316,6 +323,7 @@ Skills are assigned to models based on task complexity. See [model-strategy.md](
 - `/ship` - Release pipeline automation
 - `/tutorial` - Interactive guided creation
 - `/verify-sources` - Human verification gate
+- `/voice-checker` - Advisory review for AI-sounding patterns
 
 ### Haiku 4.5 (Pattern Matching — 15 skills)
 - `/about` - Static information

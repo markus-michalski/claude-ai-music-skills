@@ -73,7 +73,7 @@ If the verifier misses something, errors reach the human reviewer or the public.
 
 ---
 
-## Sonnet 4.5 Skills (29 skills)
+## Sonnet 4.5 Skills (30 skills)
 
 These skills require reasoning and moderate creativity but follow established patterns.
 
@@ -161,6 +161,9 @@ These skills require reasoning and moderate creativity but follow established pa
 ### verify-sources
 **Why Sonnet**: Guides the human source verification gate. Presents sources for review, captures timestamps, updates track files. Conversational workflow requiring judgment about completeness and source quality.
 
+### voice-checker
+**Why Sonnet**: Detects AI-sounding patterns in lyrics and prose — abstract noun stacking, over-explained metaphors, cliche escalation, missing idiosyncrasy, prose AI tells. Requires creative judgment to distinguish intentional artistic choices from unintentional AI patterns. Not generating content, but evaluating authenticity — a reasoning task with aesthetic sensitivity.
+
 ---
 
 ## Haiku 4.5 Skills (15 skills)
@@ -242,8 +245,8 @@ Is it purely pattern matching, file operations, or static info?
 
 | Tier | Count | Percentage | Purpose |
 |------|-------|------------|---------|
-| Opus 4.5 | 6 | 12.0% | Music-defining output, high error cost |
-| Sonnet 4.5 | 29 | 58.0% | Reasoning, coordination, moderate creativity |
-| Haiku 4.5 | 15 | 30.0% | Rule-based operations, no judgment |
+| Opus 4.5 | 6 | 11.8% | Music-defining output, high error cost |
+| Sonnet 4.5 | 30 | 58.8% | Reasoning, coordination, moderate creativity |
+| Haiku 4.5 | 15 | 29.4% | Rule-based operations, no judgment |
 
 The plugin reserves Opus for skills where quality directly impacts the music or where errors have significant consequences. Most work happens at Sonnet tier. Haiku handles mechanical operations where speed matters more than nuance.

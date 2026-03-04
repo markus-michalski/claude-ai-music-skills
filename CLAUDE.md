@@ -150,6 +150,7 @@ Concept → Research → Write (+Suno Prompt) → QC/Verify → Generate → [Po
 - **Releasing** → apply `/bitwize-music:release-director`
 
 - **Checking for plagiarism** → `/bitwize-music:plagiarism-checker` (web search + LLM knowledge)
+- **Checking voice/authenticity** → `/bitwize-music:voice-checker` (detect AI-sounding patterns)
 - **Verifying sources** → `/bitwize-music:verify-sources` (human verification gate)
 - **"What skills do X?"** → `list_skills` / `get_skill` MCP tools (not reading SKILL.md files)
 
