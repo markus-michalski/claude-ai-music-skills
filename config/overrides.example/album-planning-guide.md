@@ -36,6 +36,14 @@ Custom guidelines for album conceptualization.
 -
 -
 
+## Duration Preferences
+
+| Format | Target Duration |
+|--------|-----------------|
+| Default | 3:30–5:00 |
+| Short tracks (punk, etc.) | 2:00–3:00 |
+| Extended (prog, post-rock) | 5:00–7:00 |
+
 ---
 
 ## Example
@@ -65,4 +73,11 @@ Custom guidelines for album conceptualization.
 - Political commentary
 - Relationship drama
 - Party/club themes
+
+## Duration Preferences
+| Format | Target Duration |
+|--------|-----------------|
+| Default | 4:00–5:00 |
+| Punk/fast | 2:00–3:00 |
+| Extended (prog, post-rock) | 5:00–7:00 |
 ```

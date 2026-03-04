@@ -79,7 +79,8 @@ sheet_music:
 | **Persona Link** | [Suno persona URL] |
 
 **Suno Settings**:
-- [Target track length]
+- **Target Duration**: [3:30–5:00]
+- Per-track overrides noted in individual track files
 - [Vocal consistency notes]
 - [Production continuity notes]
 

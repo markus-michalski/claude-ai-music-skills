@@ -155,6 +155,11 @@ Concept → Research → Write (+Suno Prompt) → QC/Verify → Generate → [Po
 
 Skills contain the deep expertise. See `/reference/SKILL_INDEX.md` for the full decision tree.
 
+### Duration Planning
+
+Album target duration set during Phase 3 (Sonic Direction). Tracks inherit unless overridden.
+**Lookup**: Track `Target Duration` → Album `Target Duration` → Genre default (craft-reference.md)
+
 ### Source Verification Gate
 
 1. Capture sources FIRST — every source must be a clickable markdown link `[Name](URL)`

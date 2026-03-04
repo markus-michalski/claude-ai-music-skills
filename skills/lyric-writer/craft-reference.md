@@ -110,6 +110,22 @@ Songs that are too long (800+ words) cause Suno to rush, compress sections, or s
 
 **3:30–5:00 minutes** for all genres unless the user specifies otherwise. This is the standard range for streaming platforms and what listeners expect.
 
+### Album/Track Duration Override
+
+When a track has a `Target Duration` in its Track Details table (not `—`), use that
+instead of the genre default. When the track shows `—`, check the album README's
+`Target Duration` in Suno Settings. If both are absent, use the genre defaults below.
+
+**Duration → Word Count mapping:**
+| Target Duration | Non-Hip-Hop Words | Hip-Hop Words |
+|-----------------|-------------------|---------------|
+| 2:00–2:30       | 120–180           | 200–300       |
+| 2:30–3:30       | 150–250           | 250–400       |
+| 3:30–5:00       | 220–400           | 400–600       |
+| 5:00–7:00       | 350–500           | 550–750       |
+
+Add ~30 words per instrumental break/solo when estimating.
+
 ### Word Count Targets by Genre (Suno)
 
 These targets produce tracks in the 3:30–5:00 range on Suno. The previous lower targets (e.g., 150 words for electronic) produce 2:00–2:30 tracks.

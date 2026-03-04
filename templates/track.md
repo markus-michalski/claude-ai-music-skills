@@ -25,6 +25,7 @@ sheet_music:
 | **POV** | [Character/Perspective] |
 | **Role** | [Track's role in the album narrative] |
 | **Fade Out** | 5s |
+| **Target Duration** | — |
 | **Sources Verified** | ❌ Pending |
 
 <!--

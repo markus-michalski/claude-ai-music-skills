@@ -28,6 +28,7 @@
 - Vocal approach? (Narrator, character voices, sung, rapped, mixed)
 - Instrumentation palette?
 - Mood/atmosphere?
+- Target track duration? (Default: 3:30–5:00; user may specify longer or shorter)
 
 ## Phase 4: Structure Planning
 
