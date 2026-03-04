@@ -12,7 +12,7 @@ A complete AI music production workflow for Suno. Install as a Claude Code plugi
 
 [![Static Validation](https://github.com/bitwize-music-studio/claude-ai-music-skills/actions/workflows/test.yml/badge.svg)](https://github.com/bitwize-music-studio/claude-ai-music-skills/actions/workflows/test.yml)
 [![Model Updater](https://github.com/bitwize-music-studio/claude-ai-music-skills/actions/workflows/model-updater.yml/badge.svg)](https://github.com/bitwize-music-studio/claude-ai-music-skills/actions/workflows/model-updater.yml)
-![Version](https://img.shields.io/badge/version-0.68.0-blue)
+![Version](https://img.shields.io/badge/version-0.69.0-blue)
 ![Skills](https://img.shields.io/badge/skills-50-green)
 ![Tests](https://img.shields.io/badge/tests-2348-brightgreen)
 
@@ -36,6 +36,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full history.
 
 | Version | Highlights |
 |---------|------------|
+| **0.69** | Target Duration planning — per-album/track duration targets threaded through planning, writing, prompting, and review; duration-to-word-count mapping |
 | **0.68** | Suno target duration guidance — word count targets updated for 3:30–5:00 min tracks, instrumental tag runtime, under-200-word "too short" flag |
 | **0.67** | Sheet music URL persistence to frontmatter, `prepare_singles.py` replaces `fix_titles.py`, songbook title page/TOC/footers, `musicxml` key naming |
 | **0.66** | 12-stem pipeline (full Suno split_stem), guitar/keyboard/strings/brass/woodwinds/percussion as first-class stems, instrument-name keyword routing, percussion/drums separation fix |

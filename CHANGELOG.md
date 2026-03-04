@@ -6,6 +6,14 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-03-03
+
+### Added
+- **Target Duration planning system** — `Target Duration` field threaded through album planning (Phase 3), album/track templates, lyric-writer, suno-engineer, and lyric-reviewer; lookup chain: track → album → genre default
+- **Duration-to-word-count mapping** — explicit table in craft-reference.md mapping duration ranges to word count targets for hip-hop and non-hip-hop genres
+- **Duration-aware prompt construction** — suno-engineer adjusts structure recommendations based on target duration (under 3:00, 3:00–5:00, over 5:00)
+- **Duration override example** — album-planning-guide override template includes duration preferences by format
+
 ## [0.68.0] - 2026-03-01
 
 ### Changed
