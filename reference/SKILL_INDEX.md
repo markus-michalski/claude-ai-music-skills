@@ -114,6 +114,7 @@ Quick-reference guide for finding the right skill for any task.
 | [`configure`](/skills/configure/SKILL.md) | Set up or edit plugin configuration | First-time setup of ~/.bitwize-music/config.yaml |
 | [`document-hunter`](/skills/document-hunter/SKILL.md) | Automated browser-based document search from free archives | Finding court docs for true-story albums |
 | [`explicit-checker`](/skills/explicit-checker/SKILL.md) | Scan lyrics for explicit content, verify flags | Ensuring explicit flags match actual content |
+| [`genre-creator`](/skills/genre-creator/SKILL.md) | Create new genre documentation with consistent structure | Adding a new genre to the genre library |
 | [`help`](/skills/help/SKILL.md) | Show available skills and common workflows | Quick reference for what skills exist |
 | [`import-art`](/skills/import-art/SKILL.md) | Place album art in audio and content locations | Copying artwork to correct paths after creation |
 | [`import-audio`](/skills/import-audio/SKILL.md) | Move audio files to correct album location | Importing WAV files from Suno downloads |

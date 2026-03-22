@@ -7,6 +7,8 @@ argument-hint: <genre-name e.g. "Math Rock" or "Nu-Metal">
 
 # Genre Creator
 
+## Your Task
+
 Create a new genre README.md for the bitwize-music genre library at `${CLAUDE_PLUGIN_ROOT}/genres/`.
 
 **Input**: $ARGUMENTS (genre name, e.g. "Math Rock", "Nu-Metal", "City Pop")
@@ -94,7 +96,7 @@ ALWAYS use this exact section order:
 
 - 10-20 artists, mix of pioneers + peak-era + current acts
 - Albums in italics (*Album Name*)
-- If a deep-dive file exists: append `[Deep Dive](artists/slug.md)` to Style Focus
+- If a deep-dive file exists: append a `Deep Dive` link to the artist file in Style Focus
 
 **## Suno Prompt Keywords** — Fenced code block with comma-separated keywords organized in thematic lines:
 - Genre/subgenre labels
@@ -111,7 +113,7 @@ ALWAYS use this exact section order:
 - Description: 2-3 sentences. Explain WHAT makes this track a genre reference point. Name concrete musical elements. Explain historical/cultural significance.
 - Chronological spread from founding tracks to modern representatives
 
-## Quality Rules
+## Important Notes
 
 1. **Factual accuracy**: All years, album names, artist names must be correct. Omit rather than guess. Use WebSearch to verify.
 2. **No AI cliches**: Ban these phrases: "tapestry of sound", "sonic landscape", "testament to", "rich tapestry", "sonic journey", "pushing boundaries", "transcends genre". Write direct, concrete prose.
