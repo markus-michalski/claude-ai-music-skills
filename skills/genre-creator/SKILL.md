@@ -1,12 +1,13 @@
 ---
 name: genre-creator
 description: Create new genre documentation files for the bitwize-music genre library. Use when the user wants to add a genre, says "/genre-creator", "neues Genre erstellen", "Genre hinzufuegen", "add genre", or asks to create genre documentation. Takes a genre name as argument.
+model: claude-sonnet-4-6
 argument-hint: <genre-name e.g. "Math Rock" or "Nu-Metal">
 ---
 
 # Genre Creator
 
-Create a new genre README.md for the bitwize-music genre library at `~/.claude/plugins/marketplaces/bitwize-music/genres/`.
+Create a new genre README.md for the bitwize-music genre library at `${CLAUDE_PLUGIN_ROOT}/genres/`.
 
 **Input**: $ARGUMENTS (genre name, e.g. "Math Rock", "Nu-Metal", "City Pop")
 

@@ -6,6 +6,10 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+### Added
+- **Schlager genre** — 68th genre documentation covering German-language popular music from post-war ballads to modern EDM-infused party hits; full Overview, Characteristics, Lyric Conventions, Subgenres, Artists, Suno Keywords, and Reference Tracks sections (contributed by [@markus-michalski](https://github.com/markus-michalski) in [#69](https://github.com/bitwize-music-studio/claude-ai-music-skills/pull/69))
+- **`genre-creator` skill** — Standardizes creation of new genre documentation files with consistent section order, fact-checking via WebSearch, and automatic INDEX.md updates (contributed by [@markus-michalski](https://github.com/markus-michalski) in [#69](https://github.com/bitwize-music-studio/claude-ai-music-skills/pull/69))
+
 ## [0.71.0] - 2026-03-21
 
 ### Added
