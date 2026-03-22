@@ -6,6 +6,8 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-03-21
+
 ### Added
 - **Exclude Styles field** — New `### Exclude Styles` section in track template for Suno V5 negative prompting (e.g., "no drums, no electric guitar"); documented in suno-engineer skill with max 2–4 items rule; MCP server supports extraction via `get_track_section` and includes in `suno` content type
 - **Tampermonkey exclude styles support** — Suno auto-fill userscript (v1.2.0) now fills the "Exclude styles" input field from clipboard JSON
@@ -25,6 +27,7 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 - **Duplicate asyncio import** — Removed redundant `import asyncio` inside `verify_streaming_urls`
 - **CodeQL alerts** — Rewrote URL substring checks in tests to use `startswith()`/exact match (resolves 4 "Incomplete URL substring sanitization" alerts)
 - **Co-author line** — Updated from "Claude Opus 4.5" to "Claude Opus 4.6" in PR template and SECURITY.md
+
 ## [0.70.0] - 2026-03-20
 
 ### Added
