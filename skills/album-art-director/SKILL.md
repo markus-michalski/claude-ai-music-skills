@@ -313,7 +313,8 @@ See [prompt-examples.md](prompt-examples.md) for complete examples per platform.
 2. **Propose concept**: 2-3 visual directions with pros/cons
 3. **Get approval**: User picks direction or provides feedback
 4. **Deliver prompt**: Full AI art prompt + platform specs + iteration strategy
-5. **Iterate**: Refine based on generated results
+5. **Save to album**: Write the prompt (and negative prompt if applicable) to the album's `## Album Art` section, set the platform field
+6. **Iterate**: Refine based on generated results
 
 ---
 
