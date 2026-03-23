@@ -6,6 +6,15 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+### Added
+- **`color_hex` parameter** for `generate_promo_videos` and `generate_album_sampler` — manually set wave color (e.g. `"#C9A96E"`) instead of auto-extracting from artwork
+- **`glow` parameter** for both tools — control glow intensity from 0.0 (none) to 1.0 (full), default 0.6; replaces hardcoded 3-layer screen blend
+- **`text_color` parameter** for both tools — override default white text color (e.g. `"#FFD700"` for gold)
+- **`style` parameter for `generate_album_sampler`** — same 9 visualization styles as promo videos (was hardcoded to "pulse")
+
+### Changed
+- **Album sampler clip generation** refactored to delegate to `generate_waveform_video()` from promo video module, eliminating duplicated filter code and ensuring consistent rendering
+
 ## [0.71.0] - 2026-03-21
 
 ### Added
