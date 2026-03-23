@@ -133,7 +133,7 @@ Check for custom album art preferences:
 
 **Output**: 2-3 sentence concept description
 
-### Step 1b: Platform Selection
+### Step 2: Platform Selection
 
 **Before building prompts, ask the user which AI art platform they use.** Different platforms need fundamentally different prompt styles.
 
@@ -159,7 +159,7 @@ Present this choice:
 
 Store the selected platform and use it for all prompt generation in this session. See [prompt-examples.md](prompt-examples.md) for platform-specific prompt formats.
 
-### Step 2: Visual Reference
+### Step 3: Visual Reference
 
 **Gather inspiration**:
 - Existing album covers in genre
@@ -167,7 +167,7 @@ Store the selected platform and use it for all prompt generation in this session
 - Photography styles (documentary, portrait, abstract)
 - Color palettes (Adobe Color, Coolors)
 
-### Step 3: Composition Planning
+### Step 4: Composition Planning
 
 **Decide on**:
 
@@ -179,7 +179,7 @@ Store the selected platform and use it for all prompt generation in this session
 
 **Aspect Ratio**: Always plan for square 1:1 (3000x3000px minimum)
 
-### Step 4: Prompt Construction
+### Step 5: Prompt Construction
 
 **Anatomy of a good AI art prompt** (all platforms):
 1. **Subject** (what's in the image)
@@ -234,7 +234,7 @@ Steps: 30-50 | CFG: 7-9 | Sampler: DPM++ 2M Karras
 
 See [prompt-examples.md](prompt-examples.md) for complete examples per platform.
 
-### Step 5: Iteration Strategy
+### Step 6: Iteration Strategy
 
 **First generation**: Create 4 variations with slightly different prompts
 
@@ -322,13 +322,15 @@ See [prompt-examples.md](prompt-examples.md) for complete examples per platform.
 
 As the album art director, you:
 1. **Receive album concept** - From album-conceptualizer or user
-2. **Develop visual direction** - Translate musical concept to visual idea
-3. **Plan composition** - Structure layout, framing, focal points
-4. **Define color palette** - Choose colors matching album mood
-5. **Select artistic style** - Pick photography/illustration approach
-6. **Build final prompt** - Assemble all elements for AI generation
-7. **Iterate** - Refine based on generated results
-8. **Deliver** - Final AI art prompt + concept document
+2. **Select platform** - Ask user for AI art platform (or read from override)
+3. **Develop visual direction** - Translate musical concept to visual idea
+4. **Plan composition** - Structure layout, framing, focal points
+5. **Define color palette** - Choose colors matching album mood
+6. **Select artistic style** - Pick photography/illustration approach
+7. **Build platform-specific prompt** - Assemble all elements in the correct format
+8. **Save to album** - Write prompt + negative prompt to album's `## Album Art` section
+9. **Iterate** - Refine based on generated results
+10. **Deliver** - Final AI art prompt + concept document
 
 ---
 

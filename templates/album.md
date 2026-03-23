@@ -221,8 +221,9 @@ Run /bitwize-music:album-art-director to create a visual concept and prompt.]
 ```
 
 ### Negative Prompt
-<!-- Used by Leonardo.ai and Stable Diffusion. Leave empty for Midjourney/DALL-E. -->
+<!-- Leonardo.ai / Stable Diffusion only. Remove this section if using Midjourney or DALL-E. -->
 ```
+[Elements to exclude — only applicable for Leonardo.ai and Stable Diffusion]
 ```
 
 **Note**: Artist name should always appear in the bottom right. Preserve the artist's preferred casing/spelling.
