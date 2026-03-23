@@ -6,7 +6,7 @@ Complete prompt examples for different album types.
 
 ## Prompt Anatomy
 
-Each example shows prompts for multiple platforms. Pick the format matching your tool.
+Each example shows prompts for **Midjourney** and **Leonardo.ai** — the two most common platforms with the biggest prompt format differences. For DALL-E, use the Leonardo.ai version in a more conversational tone. For Stable Diffusion, use the Midjourney version with added token weights and an expanded negative prompt. See [Platform-Specific Tips](#platform-specific-tips) below for adaptation guidance.
 
 | Platform | Prompt Style | Negative Prompt | Key Difference |
 |----------|-------------|-----------------|----------------|
