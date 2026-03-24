@@ -6,6 +6,11 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-03-24
+
+### Added
+- **Children's Music genre** — comprehensive documentation covering nursery rhymes, educational music, Kinderlieder, lullabies, kids pop, singalong, musical storytelling, action/movement songs, animated/TV soundtrack, and family folk subgenres; 18 artists from Woody Guthrie (1947) to Cocomelon (2006+); mastering presets with lullaby variant (-16 LUFS) (contributed by [@markus-michalski](https://github.com/markus-michalski) in [#78](https://github.com/bitwize-music-studio/claude-ai-music-skills/pull/78))
+
 ## [0.77.1] - 2026-03-23
 
 ### Fixed

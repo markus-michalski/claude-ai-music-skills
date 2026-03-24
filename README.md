@@ -36,6 +36,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full history.
 
 | Version | Highlights |
 |---------|------------|
+| **0.78** | Children's Music genre with 10 subgenres, 18 artists, and mastering presets (including lullaby variant) |
 | **0.76** | Configurable promo video params (wave color, glow, text color), album sampler style selection, sampler code dedup |
 | **0.75** | Promo language selection (bilingual DE+EN mode), template reformatting, campaign cross-references |
 | **0.74** | Multi-platform AI art prompts (Midjourney, Leonardo.ai, DALL-E, Stable Diffusion), platform comparison and tips |
