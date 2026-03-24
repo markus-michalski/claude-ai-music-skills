@@ -6,6 +6,11 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+## [0.77.1] - 2026-03-23
+
+### Fixed
+- **Test skill uses venv Python and absolute paths** — `python3 -m pytest tests/` replaced with `~/.bitwize-music/venv/bin/python3 -m pytest ${CLAUDE_PLUGIN_ROOT}/tests/` across SKILL.md and test-definitions.md, fixing failures when invoked as a plugin skill (system Python missing deps, relative paths not resolving)
+
 ## [0.77.0] - 2026-03-23
 
 ### Added
