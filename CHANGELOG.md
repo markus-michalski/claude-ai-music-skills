@@ -6,6 +6,16 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-03-23
+
+### Added
+- **76 new unit tests** for external tool mocking — boto3 cloud uploads (19 tests), ffmpeg/subprocess promo video generation (14 tests), album sampler pipeline (10 tests), reference mastering CLI (7 tests), media utilities (13 tests), fade-out and master_track pipeline (12 tests), bringing total from 2,406 to 2,482
+- **PR target gate** — CI now blocks PRs to `main` unless source branch is `develop`
+- **Dev version guard** — CI blocks `-dev` version suffixes from reaching `main`
+
+### Changed
+- **TODO.md audit** — marked Priority 6 items as complete (logging, progress, retry, concurrency, cache cleanup were all already implemented); added Future Improvements section for post-1.0 work
+
 ## [0.76.0] - 2026-03-23
 
 ### Added
