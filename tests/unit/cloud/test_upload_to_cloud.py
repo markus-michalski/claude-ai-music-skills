@@ -1,8 +1,9 @@
-"""Tests for tools/cloud/upload_to_cloud.py utility functions."""
+"""Tests for tools/cloud/upload_to_cloud.py."""
 
 import sys
+import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 
 import pytest
 
@@ -28,6 +29,20 @@ for dep, original in _SAVED_DEPS.items():
         sys.modules.pop(dep, None)
     else:
         sys.modules[dep] = original
+
+
+# Real exception classes for testing except-clause handling.
+# MagicMock can't be caught by except, so we need real classes.
+class _MockClientError(Exception):
+    pass
+
+
+class _MockNoCredentialsError(Exception):
+    pass
+
+
+mod.ClientError = _MockClientError
+mod.NoCredentialsError = _MockNoCredentialsError
 
 
 # ---------------------------------------------------------------------------
@@ -183,3 +198,204 @@ class TestGetFilesToUpload:
         (promo_dir / "track.mp4").touch()
         files = mod.get_files_to_upload(tmp_path, "promos")
         assert len(files) == 1
+
+
+# ---------------------------------------------------------------------------
+# upload_file
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestUploadFile:
+    """Tests for single file upload to S3/R2."""
+
+    @pytest.fixture()
+    def fake_video(self, tmp_path):
+        f = tmp_path / "promo.mp4"
+        f.write_bytes(b"fake video content")
+        return f
+
+    def test_happy_path(self, fake_video):
+        client = MagicMock()
+        result = mod.upload_file(client, "bucket", fake_video, "key/promo.mp4")
+        assert result is True
+        client.upload_file.assert_called_once()
+
+    def test_dry_run_skips_upload(self, fake_video):
+        client = MagicMock()
+        result = mod.upload_file(client, "bucket", fake_video, "key/promo.mp4", dry_run=True)
+        assert result is True
+        client.upload_file.assert_not_called()
+
+    def test_client_error_returns_false(self, fake_video):
+        client = MagicMock()
+        client.upload_file.side_effect = _MockClientError("403 Forbidden")
+        result = mod.upload_file(client, "bucket", fake_video, "key/promo.mp4")
+        assert result is False
+
+    def test_no_credentials_returns_false(self, fake_video):
+        client = MagicMock()
+        client.upload_file.side_effect = _MockNoCredentialsError()
+        result = mod.upload_file(client, "bucket", fake_video, "key/promo.mp4")
+        assert result is False
+
+    def test_public_read_sets_acl(self, fake_video):
+        client = MagicMock()
+        mod.upload_file(client, "bucket", fake_video, "key/promo.mp4", public_read=True)
+        _, kwargs = client.upload_file.call_args
+        assert kwargs["ExtraArgs"]["ACL"] == "public-read"
+
+    def test_private_no_acl(self, fake_video):
+        client = MagicMock()
+        mod.upload_file(client, "bucket", fake_video, "key/promo.mp4", public_read=False)
+        _, kwargs = client.upload_file.call_args
+        assert "ACL" not in kwargs["ExtraArgs"]
+
+    def test_content_type_passed(self, fake_video):
+        client = MagicMock()
+        mod.upload_file(client, "bucket", fake_video, "key/promo.mp4")
+        _, kwargs = client.upload_file.call_args
+        assert kwargs["ExtraArgs"]["ContentType"] == "video/mp4"
+
+
+# ---------------------------------------------------------------------------
+# retry_upload
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestRetryUpload:
+    """Tests for upload retry with exponential backoff."""
+
+    @pytest.fixture()
+    def fake_video(self, tmp_path):
+        f = tmp_path / "promo.mp4"
+        f.write_bytes(b"fake video content")
+        return f
+
+    @patch.object(time, "sleep")
+    def test_success_first_attempt(self, mock_sleep, fake_video):
+        client = MagicMock()
+        result = mod.retry_upload(client, "bucket", fake_video, "key/f.mp4", max_retries=3)
+        assert result is True
+        mock_sleep.assert_not_called()
+
+    @patch.object(time, "sleep")
+    def test_success_on_second_attempt(self, mock_sleep, fake_video):
+        client = MagicMock()
+        client.upload_file.side_effect = [_MockClientError("500"), None]
+        result = mod.retry_upload(client, "bucket", fake_video, "key/f.mp4", max_retries=3)
+        assert result is True
+        assert client.upload_file.call_count == 2
+
+    @patch.object(time, "sleep")
+    def test_all_retries_fail(self, mock_sleep, fake_video):
+        client = MagicMock()
+        client.upload_file.side_effect = _MockClientError("500")
+        result = mod.retry_upload(client, "bucket", fake_video, "key/f.mp4", max_retries=3)
+        assert result is False
+        assert client.upload_file.call_count == 3
+
+    def test_dry_run_no_retry(self, fake_video):
+        result = mod.retry_upload(None, "bucket", fake_video, "key/f.mp4", dry_run=True)
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# get_s3_client
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestGetS3Client:
+    """Tests for S3/R2 client creation."""
+
+    @patch.object(mod, "boto3")
+    def test_r2_provider(self, mock_boto3):
+        config = {
+            "cloud": {
+                "provider": "r2",
+                "r2": {
+                    "account_id": "abc123",
+                    "access_key_id": "key",
+                    "secret_access_key": "secret",
+                },
+            }
+        }
+        mod.get_s3_client(config)
+        mock_boto3.client.assert_called_once_with(
+            "s3",
+            endpoint_url="https://abc123.r2.cloudflarestorage.com",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
+        )
+
+    @patch.object(mod, "boto3")
+    def test_s3_provider(self, mock_boto3):
+        config = {
+            "cloud": {
+                "provider": "s3",
+                "s3": {
+                    "region": "eu-west-1",
+                    "access_key_id": "key",
+                    "secret_access_key": "secret",
+                },
+            }
+        }
+        mod.get_s3_client(config)
+        mock_boto3.client.assert_called_once_with(
+            "s3",
+            region_name="eu-west-1",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
+        )
+
+    def test_missing_r2_credentials_exits(self):
+        config = {"cloud": {"provider": "r2", "r2": {"account_id": "abc"}}}
+        with pytest.raises(SystemExit):
+            mod.get_s3_client(config)
+
+    def test_unknown_provider_exits(self):
+        config = {"cloud": {"provider": "azure"}}
+        with pytest.raises(SystemExit):
+            mod.get_s3_client(config)
+
+
+# ---------------------------------------------------------------------------
+# find_album_path
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestFindAlbumPath:
+    """Tests for album directory resolution."""
+
+    def _make_config(self, tmp_path):
+        return {
+            "paths": {"audio_root": str(tmp_path)},
+            "artist": {"name": "testartist"},
+        }
+
+    def test_mirrored_structure(self, tmp_path):
+        album_dir = tmp_path / "artists" / "testartist" / "albums" / "hip-hop" / "my-album"
+        album_dir.mkdir(parents=True)
+        result = mod.find_album_path(self._make_config(tmp_path), "my-album")
+        assert result == album_dir
+
+    def test_direct_path(self, tmp_path):
+        album_dir = tmp_path / "my-album"
+        album_dir.mkdir()
+        result = mod.find_album_path(self._make_config(tmp_path), "my-album")
+        assert result == album_dir
+
+    def test_audio_root_override(self, tmp_path):
+        override_root = tmp_path / "custom"
+        album_dir = override_root / "my-album"
+        album_dir.mkdir(parents=True)
+        config = self._make_config(tmp_path)
+        result = mod.find_album_path(config, "my-album", audio_root_override=str(override_root))
+        assert result == album_dir
+
+    def test_not_found_exits(self, tmp_path):
+        with pytest.raises(SystemExit):
+            mod.find_album_path(self._make_config(tmp_path), "nonexistent")
+
+    def test_path_traversal_in_name_exits(self, tmp_path):
+        with pytest.raises(SystemExit):
+            mod.find_album_path(self._make_config(tmp_path), "../../../etc")

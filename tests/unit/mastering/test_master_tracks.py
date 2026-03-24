@@ -24,7 +24,9 @@ from tools.mastering.master_tracks import (
     GENRE_PRESETS,
     _BUILTIN_PRESETS_FILE,
     _load_yaml_file,
+    _process_one_track,
     apply_eq,
+    apply_fade_out,
     apply_high_shelf,
     limit_peaks,
     load_genre_presets,
@@ -562,3 +564,98 @@ class TestYamlPresetLoading:
         assert 'rock' in presets
         assert 'pop' in presets
         assert len(presets) > 50
+
+
+# ─── Tests: Fade Out ─────────────────────────────────────────────────
+
+
+class TestApplyFadeOut:
+    """Tests for apply_fade_out function."""
+
+    def test_zero_duration_passthrough(self):
+        data, rate = _generate_sine(duration=1.0)
+        result = apply_fade_out(data, rate, duration=0)
+        assert np.array_equal(result, data)
+
+    def test_negative_duration_passthrough(self):
+        data, rate = _generate_sine(duration=1.0)
+        result = apply_fade_out(data, rate, duration=-1.0)
+        assert np.array_equal(result, data)
+
+    def test_end_is_silent(self):
+        data, rate = _generate_sine(duration=3.0, amplitude=0.5)
+        result = apply_fade_out(data, rate, duration=2.0)
+        # Last sample should be near zero
+        assert np.max(np.abs(result[-1])) < 0.01
+
+    def test_beginning_unchanged(self):
+        data, rate = _generate_sine(duration=3.0, amplitude=0.5)
+        result = apply_fade_out(data, rate, duration=1.0)
+        # First half should be unchanged
+        midpoint = data.shape[0] // 2
+        assert np.array_equal(result[:midpoint], data[:midpoint])
+
+    def test_fade_longer_than_audio(self):
+        data, rate = _generate_sine(duration=1.0, amplitude=0.5)
+        result = apply_fade_out(data, rate, duration=5.0)
+        # Should not crash, end should be silent
+        assert np.max(np.abs(result[-1])) < 0.01
+
+    def test_mono_input(self):
+        data, rate = _generate_sine(duration=2.0, stereo=False)
+        result = apply_fade_out(data, rate, duration=1.0)
+        assert len(result.shape) == 1
+        assert np.max(np.abs(result[-1])) < 0.01
+
+    def test_linear_curve(self):
+        data, rate = _generate_sine(duration=2.0)
+        result = apply_fade_out(data, rate, duration=1.0, curve='linear')
+        assert np.max(np.abs(result[-1])) < 0.01
+
+    def test_does_not_mutate_input(self):
+        data, rate = _generate_sine(duration=2.0)
+        original = data.copy()
+        apply_fade_out(data, rate, duration=1.0)
+        assert np.array_equal(data, original)
+
+
+# ─── Tests: Process One Track ─────────────────────────────────────────
+
+
+class TestProcessOneTrack:
+    """Tests for _process_one_track helper."""
+
+    def test_dry_run_returns_estimate(self, sine_wav, output_path):
+        name, result = _process_one_track(
+            Path(sine_wav), Path(output_path),
+            target_lufs=-14.0, eq_settings=None,
+            ceiling_db=-1.0, dry_run=True,
+        )
+        assert result is not None
+        assert result['final_lufs'] == -14.0
+        assert not Path(output_path).exists()
+
+    def test_real_run_creates_output(self, sine_wav, output_path):
+        name, result = _process_one_track(
+            Path(sine_wav), Path(output_path),
+            target_lufs=-14.0, eq_settings=None,
+            ceiling_db=-1.0, dry_run=False,
+        )
+        assert result is not None
+        assert Path(output_path).exists()
+
+    def test_silent_returns_none(self, silent_wav, output_path):
+        name, result = _process_one_track(
+            Path(silent_wav), Path(output_path),
+            target_lufs=-14.0, eq_settings=None,
+            ceiling_db=-1.0, dry_run=False,
+        )
+        assert result is None
+
+    def test_dry_run_silent_returns_none(self, silent_wav, output_path):
+        name, result = _process_one_track(
+            Path(silent_wav), Path(output_path),
+            target_lufs=-14.0, eq_settings=None,
+            ceiling_db=-1.0, dry_run=True,
+        )
+        assert result is None
