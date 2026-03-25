@@ -48,8 +48,10 @@ jobs:
         PLUGIN_VERSION=$(jq -r '.version' .claude-plugin/plugin.json)
         ERRORS=0
 
-        # Check version badge
-        if grep -qF "badge/version-${PLUGIN_VERSION}-blue" README.md; then
+        # Check version badge (skip on -dev versions — badge shows last release)
+        if echo "$PLUGIN_VERSION" | grep -q '\-dev'; then
+          echo "[SKIP] Dev version ($PLUGIN_VERSION) — badge check skipped"
+        elif grep -qF "badge/version-${PLUGIN_VERSION}-blue" README.md; then
           echo "[OK] Version badge matches: $PLUGIN_VERSION"
         else
           README_BADGE=$(grep -oP 'badge/version-\K[^-]+' README.md || echo "not found")
