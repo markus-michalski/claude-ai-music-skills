@@ -335,25 +335,6 @@ def _get_rhyme_tail(word: str) -> str:
     return word[last_vowel_pos:]
 
 
-def _words_rhyme(w1: str, w2: str) -> bool:
-    """Check if two words rhyme by comparing rhyme tails.
-
-    Requires tails >= 2 chars. Identical words return False
-    (flagged as self-rhyme separately).
-    """
-    if not w1 or not w2:
-        return False
-    w1_clean = w1.lower().strip("'")
-    w2_clean = w2.lower().strip("'")
-    if w1_clean == w2_clean:
-        return False
-    tail1 = _get_rhyme_tail(w1)
-    tail2 = _get_rhyme_tail(w2)
-    if len(tail1) < 2 or len(tail2) < 2:
-        return False
-    return tail1 == tail2
-
-
 async def count_syllables(text: str) -> str:
     """Get syllable counts per line with section tracking and consistency analysis.
 

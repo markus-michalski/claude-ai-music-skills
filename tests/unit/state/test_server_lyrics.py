@@ -1932,41 +1932,6 @@ class TestValidateSectionStructure:
 
 
 # ===========================================================================
-# _words_rhyme helper tests
-# ===========================================================================
-
-class TestWordsRhyme:
-    """Tests for the _words_rhyme helper."""
-
-    def test_empty_inputs(self):
-        assert _lyrics_analysis_mod._words_rhyme("", "night") is False
-        assert _lyrics_analysis_mod._words_rhyme("night", "") is False
-        assert _lyrics_analysis_mod._words_rhyme("", "") is False
-
-    def test_identical_words_return_false(self):
-        assert _lyrics_analysis_mod._words_rhyme("night", "night") is False
-
-    def test_case_insensitive_identity(self):
-        assert _lyrics_analysis_mod._words_rhyme("Night", "night") is False
-
-    def test_short_tail_no_match(self):
-        # Single-char tails should not match
-        assert _lyrics_analysis_mod._words_rhyme("a", "ma") is False
-
-    def test_true_rhyme_pair(self):
-        assert _lyrics_analysis_mod._words_rhyme("night", "light") is True
-        assert _lyrics_analysis_mod._words_rhyme("fire", "desire") is True
-
-    def test_false_rhyme_pair(self):
-        assert _lyrics_analysis_mod._words_rhyme("night", "book") is False
-        assert _lyrics_analysis_mod._words_rhyme("cat", "dog") is False
-
-    def test_apostrophe_handling(self):
-        # Apostrophes should be stripped before comparison
-        assert _lyrics_analysis_mod._words_rhyme("night", "light") is True
-
-
-# ===========================================================================
 # Additional _count_syllables_word edge case tests
 # ===========================================================================
 

@@ -299,20 +299,31 @@ async def verify_streaming_urls(album_slug: str) -> str:
     unreachable_count = 0
     not_set_count = 0
 
+    # First pass: separate not_set platforms from those needing HTTP checks
+    keys_to_check = []
     for key in _STREAMING_PLATFORM_KEYS:
         url = streaming.get(key, "")
         if not url:
             results[key] = {"url": "", "reachable": None, "status": "not_set"}
             not_set_count += 1
-            continue
-
-        # Run blocking HTTP in thread pool to avoid blocking the event loop
-        result_entry = await loop.run_in_executor(None, _check_url, url)
-        results[key] = result_entry
-        if result_entry.get("reachable"):
-            reachable_count += 1
         else:
-            unreachable_count += 1
+            keys_to_check.append((key, url))
+
+    # Run all URL checks concurrently in thread pool
+    if keys_to_check:
+        tasks = [
+            loop.run_in_executor(None, _check_url, url)
+            for _key, url in keys_to_check
+        ]
+        check_results = await asyncio.gather(*tasks)
+
+        # Merge results back
+        for (key, _url), result_entry in zip(keys_to_check, check_results):
+            results[key] = result_entry
+            if result_entry.get("reachable"):
+                reachable_count += 1
+            else:
+                unreachable_count += 1
 
     all_reachable = reachable_count > 0 and unreachable_count == 0 and not_set_count == 0
 

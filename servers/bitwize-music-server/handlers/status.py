@@ -9,6 +9,7 @@ from handlers._shared import (
     _normalize_slug, _safe_json, _find_album_or_error,
     _extract_markdown_section, _extract_code_block,
     _find_wav_source_dir,
+    _STREAMING_PLACEHOLDER_MARKERS,
     TRACK_NOT_STARTED, TRACK_SOURCES_PENDING,
     TRACK_SOURCES_VERIFIED, TRACK_IN_PROGRESS,
     TRACK_GENERATED, TRACK_FINAL,
@@ -181,15 +182,6 @@ _ALBUM_ART_PATTERNS = [
     "artwork.png", "artwork.jpg", "cover.png", "cover.jpg",
 ]
 
-# Streaming lyrics placeholder markers
-_STREAMING_PLACEHOLDER_MARKERS = [
-    "Plain lyrics here",
-    "Capitalize first letter of each line",
-    "No end punctuation",
-    "Write out all repeats fully",
-    "Blank lines between sections only",
-]
-
 
 # ---------------------------------------------------------------------------
 # Tool functions
@@ -234,9 +226,12 @@ async def update_album_status(album_slug: str, status: str, force: bool = False)
     if err:
         return _safe_json({"error": err})
 
+    # Single state lookup for config checks below
+    state = _shared.cache.get_state()
+
     # Documentary album gate: albums with SOURCES.md cannot skip Concept → In Progress (configurable)
     if not force:
-        state_config = (_shared.cache.get_state()).get("config", {})
+        state_config = state.get("config", {})
         gen_cfg = state_config.get("generation", {})
         require_source_path = gen_cfg.get("require_source_path_for_documentary", True)
         if require_source_path:
@@ -284,7 +279,7 @@ async def update_album_status(album_slug: str, status: str, force: bool = False)
     canonical_status = _CANONICAL_ALBUM_STATUS.get(status.lower().strip(), status)
     if canonical_status == ALBUM_RELEASED and not force:
         release_issues = []
-        state_config = (_shared.cache.get_state()).get("config", {})
+        state_config = state.get("config", {})
         tracks = album.get("tracks", {})
 
         # Check 1: All tracks Final (explicit message, complements consistency check)

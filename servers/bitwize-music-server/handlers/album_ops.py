@@ -7,6 +7,7 @@ from pathlib import Path
 from handlers._shared import (
     _normalize_slug, _safe_json, _extract_markdown_section, _extract_code_block,
     _SECTION_NAMES, _find_wav_source_dir,
+    _CODE_BLOCK_SECTIONS,
     _VALID_GENRES, _GENRE_ALIASES,
     STATUS_UNKNOWN, TRACK_COMPLETED_STATUSES,
 )
@@ -109,8 +110,7 @@ async def get_album_full(
                     sec_content = _extract_markdown_section(file_text, heading)
                     if sec_content is not None:
                         # For code-block sections, extract just the code block
-                        code_block_sections = {"Style Box", "Exclude Styles", "Lyrics Box", "Streaming Lyrics", "Original Quote"}
-                        if heading in code_block_sections:
+                        if heading in _CODE_BLOCK_SECTIONS:
                             code = _extract_code_block(sec_content)
                             if code is not None:
                                 sec_content = code

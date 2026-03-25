@@ -7,7 +7,7 @@ from typing import Optional
 
 from handlers._shared import (
     _normalize_slug, _safe_json, _extract_markdown_section, _extract_code_block,
-    _SECTION_TAG_RE,
+    _SECTION_TAG_RE, _STREAMING_PLACEHOLDER_MARKERS,
 )
 from handlers import _shared
 from handlers import text_analysis as _text_analysis
@@ -310,16 +310,6 @@ async def run_pre_generation_gates(
 # =============================================================================
 # Release Readiness Checks
 # =============================================================================
-
-# Template placeholder markers — if streaming lyrics contain these, the section
-# hasn't been filled in yet.
-_STREAMING_PLACEHOLDER_MARKERS = [
-    "Plain lyrics here",
-    "Capitalize first letter of each line",
-    "No end punctuation",
-    "Write out all repeats fully",
-    "Blank lines between sections only",
-]
 
 # End-of-line punctuation that shouldn't appear in streaming lyrics.
 # Ellipsis (...) is allowed, so we match single trailing punctuation only.

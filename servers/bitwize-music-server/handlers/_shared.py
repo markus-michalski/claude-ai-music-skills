@@ -338,6 +338,20 @@ _STREAMING_PLATFORMS = {
 }
 
 
+# Template placeholder markers — if streaming lyrics contain these, the section
+# hasn't been filled in yet.
+_STREAMING_PLACEHOLDER_MARKERS = [
+    "Plain lyrics here",
+    "Capitalize first letter of each line",
+    "No end punctuation",
+    "Write out all repeats fully",
+    "Blank lines between sections only",
+]
+
+# Sections whose markdown content should be extracted as a code block
+_CODE_BLOCK_SECTIONS = frozenset({"Style Box", "Exclude Styles", "Lyrics Box", "Streaming Lyrics", "Original Quote"})
+
+
 def _find_wav_source_dir(audio_dir: Path) -> Path:
     """Return originals/ if it exists, else album root (legacy fallback)."""
     originals = audio_dir / "originals"

@@ -10,7 +10,7 @@ from tools.state.parsers import parse_track_file
 
 from handlers._shared import (
     _normalize_slug, _safe_json, _extract_markdown_section, _extract_code_block,
-    _SECTION_NAMES,
+    _SECTION_NAMES, _CODE_BLOCK_SECTIONS,
     TRACK_NOT_STARTED,
     TRACK_IN_PROGRESS, TRACK_GENERATED, TRACK_FINAL,
     TRACK_COMPLETED_STATUSES, STATUS_UNKNOWN,
@@ -822,9 +822,8 @@ async def extract_section(album_slug: str, track_slug: str, section: str) -> str
         })
 
     # For code-block sections, extract just the code block
-    code_block_sections = {"Style Box", "Exclude Styles", "Lyrics Box", "Streaming Lyrics", "Original Quote"}
     code_content = None
-    if heading in code_block_sections:
+    if heading in _CODE_BLOCK_SECTIONS:
         code_content = _extract_code_block(content)
 
     return _safe_json({
@@ -947,7 +946,7 @@ async def update_track_field(
         canonical_new = _CANONICAL_TRACK_STATUS.get(value.lower().strip(), value)
         if canonical_new == TRACK_GENERATED:
             blocklist = _load_artist_blocklist()
-            state_config = (_shared.cache.get_state()).get("config", {})
+            state_config = state.get("config", {})
             gen_cfg = state_config.get("generation", {})
             gate_blocking, _, gate_results = _check_pre_gen_gates_for_track(
                 track_data, text, blocklist,
@@ -964,7 +963,7 @@ async def update_track_field(
     if field_key == "status" and not force:
         canonical_new = _CANONICAL_TRACK_STATUS.get(value.lower().strip(), value)
         if canonical_new == TRACK_FINAL:
-            state_config = (_shared.cache.get_state()).get("config", {})
+            state_config = state.get("config", {})
             gen_config = state_config.get("generation", {})
             require_link = gen_config.get("require_suno_link_for_final", True)
             if require_link and not track_data.get("has_suno_link", False):

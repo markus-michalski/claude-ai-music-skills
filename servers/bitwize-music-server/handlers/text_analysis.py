@@ -9,6 +9,7 @@ from typing import Optional
 from handlers._shared import (
     _normalize_slug, _safe_json, _extract_markdown_section, _extract_code_block,
     _SECTION_TAG_RE, _WORD_TOKEN_RE, _CROSS_TRACK_STOPWORDS,
+    _MARKDOWN_LINK_RE,
 )
 from handlers import _shared
 
@@ -519,8 +520,6 @@ async def check_explicit_content(text: str) -> str:
 
 
 # --- Link extraction ---
-
-_MARKDOWN_LINK_RE = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
 
 
 async def extract_links(
