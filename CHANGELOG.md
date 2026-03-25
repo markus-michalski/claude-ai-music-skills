@@ -6,6 +6,11 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+## [0.79.1] - 2026-03-25
+
+### Added
+- **Dependabot configuration** — automated weekly dependency update PRs for pip packages and GitHub Actions version pins
+
 ## [0.79.0] - 2026-03-25
 
 ### Added
