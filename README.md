@@ -58,7 +58,7 @@ This is where the engineering lives. The plugin is a case study in how far you c
 
 Each skill is a self-contained markdown file with a YAML frontmatter that declares its model, description, and when it should activate. Skills range from simple clipboard operations to multi-step creative workflows. Claude routes to skills automatically based on context, or you invoke them directly with `/bitwize-music:<name>`.
 
-Skills aren't just prompts — they carry domain expertise. The lyric-writer knows prosody rules, rhyme scheme analysis, and Suno's pronunciation quirks. The mastering-engineer knows loudness targets per platform and genre-specific EQ curves. The researcher coordinates parallel sub-agents across 10 domain specializations.
+The lyric-writer knows prosody rules, rhyme scheme analysis, and Suno's pronunciation quirks. The mastering-engineer knows loudness targets per platform and genre-specific EQ curves. The researcher coordinates parallel sub-agents across 10 domain specializations.
 
 See [docs/skills.md](docs/skills.md) for the full reference.
 
@@ -78,7 +78,7 @@ See [reference/model-strategy.md](reference/model-strategy.md) for per-skill rat
 
 ### MCP Server (80+ Tools)
 
-A 10,000-line Python MCP server exposes 80+ tools for instant state queries, audio analysis, lyrics processing, and database operations. The server is the plugin's nervous system — skills call MCP tools instead of reading files directly, which keeps responses fast and state consistent.
+A Python MCP server exposes 80+ tools for instant state queries, audio analysis, lyrics processing, and database operations. The server is the plugin's nervous system — skills call MCP tools instead of reading files directly, which keeps responses fast and state consistent.
 
 Key tool categories:
 - **State management** — album/track lookups, session context, cache rebuild
