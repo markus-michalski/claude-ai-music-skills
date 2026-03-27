@@ -1085,7 +1085,7 @@ class TestTokenizeLyricsWithSections:
 
     def test_all_section_types_recognized(self):
         """All priority section types should be correctly identified."""
-        for section_type in ["chorus", "hook", "pre-chorus", "bridge", "outro", "verse", "intro"]:
+        for section_type in ["chorus", "hook", "pre-chorus", "bridge", "outro", "verse", "intro", "end"]:
             tag = f"[{section_type.title()}]"
             lyrics = f"{tag}\nTest words here"
             result = _lyrics_analysis_mod._tokenize_lyrics_with_sections(lyrics)

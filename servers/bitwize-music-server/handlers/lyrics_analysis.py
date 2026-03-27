@@ -84,6 +84,7 @@ _SECTION_PRIORITY = {
     "outro": 2,
     "verse": 1,
     "intro": 1,
+    "end": 1,
 }
 
 
