@@ -242,7 +242,7 @@ jobs:
 
     - name: Run mypy type checker
       run: |
-        mypy servers/bitwize-music-server/handlers/
+        mypy
 
     - name: Validation summary
       run: |

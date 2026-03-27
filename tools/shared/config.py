@@ -1,5 +1,7 @@
 """Configuration loading and override validation for bitwize-music tools."""
 
+from __future__ import annotations
+
 import logging
 import re
 from pathlib import Path
@@ -8,14 +10,14 @@ from typing import Any
 try:
     import yaml
 except ImportError:
-    yaml = None
+    yaml = None  # type: ignore[assignment]
 
 CONFIG_PATH = Path.home() / ".bitwize-music" / "config.yaml"
 
 logger = logging.getLogger(__name__)
 
 # Known override files and their expected format
-OVERRIDE_FILES = {
+OVERRIDE_FILES: dict[str, dict[str, Any]] = {
     'CLAUDE.md': {
         'extension': '.md',
         'must_contain': None,  # Free-form markdown instructions
@@ -51,7 +53,7 @@ def load_config(
         return fallback
 
     if yaml is None:
-        logger.error("pyyaml is not installed. Install with: pip install pyyaml")
+        logger.error("pyyaml is not installed. Install with: pip install pyyaml")  # type: ignore[unreachable]
         return fallback
 
     try:

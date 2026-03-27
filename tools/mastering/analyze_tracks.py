@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Analyze audio tracks for mastering decisions."""
+from __future__ import annotations
 
 import argparse
 import logging
@@ -7,6 +8,7 @@ import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pyloudnorm as pyln
@@ -23,7 +25,7 @@ from tools.shared.progress import ProgressBar
 
 logger = logging.getLogger(__name__)
 
-def analyze_track(filepath):
+def analyze_track(filepath: Path | str) -> dict[str, Any]:
     """Analyze a single track and return metrics."""
     data, rate = sf.read(filepath)
 
@@ -88,7 +90,7 @@ def analyze_track(filepath):
         'tinniness_ratio': tinniness_ratio,
     }
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description='Analyze audio tracks for mastering.')
     parser.add_argument('path', nargs='?', default='.',
                         help='Path to directory containing WAV files (default: current directory)')

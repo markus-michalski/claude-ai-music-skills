@@ -10,7 +10,7 @@ markers = [
 [tool.mypy]
 python_version = "3.11"
 mypy_path = "servers/bitwize-music-server"
-files = ["servers/bitwize-music-server/handlers"]
+files = ["servers/bitwize-music-server", "tools"]
 namespace_packages = true
 explicit_package_bases = true
 warn_return_any = true
@@ -25,10 +25,6 @@ warn_unused_ignores = true
 warn_unreachable = true
 disallow_any_generics = true
 follow_imports = "silent"
-
-[[tool.mypy.overrides]]
-module = "tools.*"
-ignore_errors = true
 
 [tool.ruff]
 target-version = "py311"

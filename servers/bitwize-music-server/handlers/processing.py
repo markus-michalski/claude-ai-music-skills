@@ -465,9 +465,9 @@ async def master_audio(
     # Build EQ settings
     eq_settings = []
     if effective_highmid != 0:
-        eq_settings.append((3500, effective_highmid, 1.5))
+        eq_settings.append((3500.0, effective_highmid, 1.5))
     if effective_highs != 0:
-        eq_settings.append((8000, effective_highs, 0.7))
+        eq_settings.append((8000.0, effective_highs, 0.7))
 
     output_dir = audio_dir / "mastered"
     if not dry_run:
@@ -518,7 +518,7 @@ async def master_audio(
                     fade_out_val = track_info["fade_out"]
 
             def _do_master(in_path: Path, out_path: Path, fo: float) -> dict[str, Any]:
-                return _master_track(  # type: ignore[no-any-return]
+                return _master_track(
                     str(in_path), str(out_path),
                     target_lufs=effective_lufs,
                     eq_settings=eq_settings if eq_settings else None,
@@ -1909,9 +1909,9 @@ async def master_album(
     # --- Stage 4: Mastering ---
     eq_settings = []
     if effective_highmid != 0:
-        eq_settings.append((3500, effective_highmid, 1.5))
+        eq_settings.append((3500.0, effective_highmid, 1.5))
     if effective_highs != 0:
-        eq_settings.append((8000, effective_highs, 0.7))
+        eq_settings.append((8000.0, effective_highs, 0.7))
 
     output_dir = audio_dir / "mastered"
     output_dir.mkdir(exist_ok=True)
@@ -1932,8 +1932,8 @@ async def master_album(
         track_meta = album_tracks.get(track_slug, {})
         fade_out_val = track_meta.get("fade_out")
 
-        def _do_master(in_path: Path, out_path: Path, lufs: float, eq: list[tuple[int, float, float]], ceil: float, fade: float | None, comp: float) -> dict[str, Any]:
-            return _master_track(  # type: ignore[no-any-return]
+        def _do_master(in_path: Path, out_path: Path, lufs: float, eq: list[tuple[float, float, float]], ceil: float, fade: float | None, comp: float) -> dict[str, Any]:
+            return _master_track(
                 str(in_path), str(out_path),
                 target_lufs=lufs,
                 eq_settings=eq if eq else None,
@@ -2029,7 +2029,7 @@ async def master_album(
                 if not raw_path.exists():
                     continue
 
-                def _do_recovery(src: Path, dst: Path, lufs: float, eq: list[tuple[int, float, float]], ceil: float) -> dict[str, Any]:
+                def _do_recovery(src: Path, dst: Path, lufs: float, eq: list[tuple[float, float, float]], ceil: float) -> dict[str, Any]:
                     import soundfile as sf
                     data, rate = sf.read(str(src))
                     if len(data.shape) == 1:
@@ -2041,7 +2041,7 @@ async def master_album(
                         ceiling_db=ceil,
                     )
                     sf.write(str(dst), data, rate, subtype="PCM_16")
-                    return metrics  # type: ignore[no-any-return]
+                    return metrics
 
                 mastered_path = output_dir / fname
                 metrics = await loop.run_in_executor(
@@ -2384,8 +2384,8 @@ async def polish_audio(
 
             out_path = str(output_dir / f"{track_dir.name}.wav")
 
-            def _do_stems(sp: dict[str, str], op: str, g: str | None, dr: bool) -> dict[str, Any]:
-                return mix_track_stems(sp, op, genre=g, dry_run=dr)  # type: ignore[no-any-return]
+            def _do_stems(sp: dict[str, str | list[str]], op: str, g: str | None, dr: bool) -> dict[str, Any]:
+                return mix_track_stems(sp, op, genre=g, dry_run=dr)
 
             result = await loop.run_in_executor(
                 None, _do_stems, stem_paths, out_path,
@@ -2411,7 +2411,7 @@ async def polish_audio(
             out_path = str(output_dir / wav_file.name)
 
             def _do_full(ip: str, op: str, g: str | None, dr: bool) -> dict[str, Any]:
-                return mix_track_full(ip, op, genre=g, dry_run=dr)  # type: ignore[no-any-return]
+                return mix_track_full(ip, op, genre=g, dry_run=dr)
 
             result = await loop.run_in_executor(
                 None, _do_full, str(wav_file), out_path,

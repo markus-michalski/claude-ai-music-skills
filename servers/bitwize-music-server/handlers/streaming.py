@@ -94,7 +94,7 @@ async def update_streaming_url(album_slug: str, platform: str, url: str) -> str:
     Returns:
         JSON with update result or error
     """
-    import yaml  # type: ignore[import-untyped,unused-ignore]
+    import yaml
 
     # Validate platform
     canonical_platform = _STREAMING_PLATFORMS.get(platform.lower().replace(" ", "_"))

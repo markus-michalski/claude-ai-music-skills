@@ -7,6 +7,8 @@ Uses regex against the exact markdown table format in templates:
   | **Key** | Value |
 """
 
+from __future__ import annotations
+
 import re
 import warnings
 from pathlib import Path
@@ -16,7 +18,7 @@ from typing import Any
 try:
     import yaml
 except ImportError:
-    yaml = None
+    yaml = None  # type: ignore[assignment]
 
 # =============================================================================
 # Pre-compiled regex patterns (F2: avoid recompilation on every call)
@@ -57,7 +59,7 @@ def parse_frontmatter(text: str) -> dict[str, Any]:
         return {}
 
     if yaml is None:
-        return {'_error': 'PyYAML not installed'}
+        return {'_error': 'PyYAML not installed'}  # type: ignore[unreachable]
 
     try:
         result = yaml.safe_load(frontmatter_text) or {}
@@ -68,7 +70,7 @@ def parse_frontmatter(text: str) -> dict[str, Any]:
         return {'_error': f'Invalid YAML: {e}'}
 
 
-_table_value_cache: dict[str, re.Pattern] = {}
+_table_value_cache: dict[str, re.Pattern[str]] = {}
 
 
 def _extract_table_value(text: str, key: str) -> str | None:
@@ -234,7 +236,7 @@ def _parse_tracklist_table(text: str) -> list[dict[str, str]]:
     | # | Title | POV | Concept | Status |
     | # | Title | POV | Concept | Duration | Status |
     """
-    tracks = []
+    tracks: list[dict[str, str]] = []
 
     # Find the Tracklist section
     tracklist_match = _RE_TRACKLIST_SECTION.search(text)
@@ -458,7 +460,7 @@ def parse_ideas_file(path: Path) -> dict[str, Any]:
     }
 
 
-_bold_field_cache: dict[str, re.Pattern] = {}
+_bold_field_cache: dict[str, re.Pattern[str]] = {}
 
 
 def _extract_bold_field(text: str, key: str) -> str | None:

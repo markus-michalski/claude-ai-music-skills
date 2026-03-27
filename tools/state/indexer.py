@@ -18,6 +18,8 @@ Usage (either form works):
     python3 -m tools.state.indexer rebuild
 """
 
+from __future__ import annotations
+
 import argparse
 import contextlib
 import copy
@@ -31,7 +33,7 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Lock timeout in seconds (prevents indefinite blocking)
 LOCK_TIMEOUT_SECONDS = 10
@@ -118,7 +120,7 @@ def _migrate_1_1_to_1_2(state: dict[str, Any]) -> dict[str, Any]:
 
 # Migration chain for schema upgrades
 # Format: "from_version": (migration_fn, "to_version")
-MIGRATIONS: dict[str, tuple] = {
+MIGRATIONS: dict[str, tuple[Any, str]] = {
     "1.0.0": (_migrate_1_0_to_1_1, "1.1.0"),
     "1.1.0": (_migrate_1_1_to_1_2, "1.2.0"),
 }
@@ -562,7 +564,7 @@ def incremental_update(existing_state: dict[str, Any], config: dict[str, Any]) -
     return state
 
 
-def _update_tracks_incremental(album: dict[str, Any], album_dir: Path):
+def _update_tracks_incremental(album: dict[str, Any], album_dir: Path) -> None:
     """Update individual tracks within an album incrementally."""
     tracks_dir = album_dir / "tracks"
     if not tracks_dir.exists():
@@ -611,7 +613,7 @@ def _update_tracks_incremental(album: dict[str, Any], album_dir: Path):
     )
 
 
-def _acquire_lock_with_timeout(lock_fd, timeout: int = LOCK_TIMEOUT_SECONDS):
+def _acquire_lock_with_timeout(lock_fd: Any, timeout: int = LOCK_TIMEOUT_SECONDS) -> None:
     """Acquire an exclusive file lock with timeout and stale lock recovery.
 
     Args:
@@ -657,7 +659,7 @@ def _acquire_lock_with_timeout(lock_fd, timeout: int = LOCK_TIMEOUT_SECONDS):
         time.sleep(0.1)
 
 
-def write_state(state: dict[str, Any]):
+def write_state(state: dict[str, Any]) -> None:
     """Write state to cache file atomically with file locking.
 
     Acquires an exclusive lock (with timeout) to prevent concurrent writes,
@@ -714,13 +716,13 @@ def read_state() -> dict[str, Any] | None:
         return None
     try:
         with open(STATE_FILE) as f:
-            return json.load(f)
+            return cast(dict[str, Any], json.load(f))
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("Corrupted state file: %s", e)
         return None
 
 
-def migrate_state(state: dict[str, Any]) -> dict[str, Any]:
+def migrate_state(state: dict[str, Any]) -> dict[str, Any] | None:
     """Apply all needed migrations in sequence.
 
     Args:
@@ -760,8 +762,8 @@ def _version_compare(a: str, b: str) -> int:
     Handles variable-length versions (e.g., "1.0" vs "1.0.0") by
     zero-padding the shorter one. Non-numeric parts are treated as 0.
     """
-    def _parts(v):
-        parts = []
+    def _parts(v: str) -> list[int]:
+        parts: list[int] = []
         for x in v.split('.'):
             try:
                 parts.append(int(x))
@@ -790,7 +792,7 @@ def validate_state(state: dict[str, Any]) -> list[str]:
     errors = []
 
     if not isinstance(state, dict):
-        return ["State is not a dict"]
+        return ["State is not a dict"]  # type: ignore[unreachable]
 
     # Required top-level keys
     required_keys = {'version', 'generated_at', 'plugin_version', 'config', 'albums', 'ideas', 'skills', 'session'}
@@ -884,7 +886,7 @@ def validate_state(state: dict[str, Any]) -> list[str]:
 # CLI Commands
 # ==========================================================================
 
-def cmd_rebuild(args):
+def cmd_rebuild(args: argparse.Namespace) -> int:
     """Full rebuild of state cache."""
     logger.info("Building project index...")
 
@@ -921,7 +923,7 @@ def cmd_rebuild(args):
     return 0
 
 
-def cmd_update(args):
+def cmd_update(args: argparse.Namespace) -> int:
     """Incremental update of state cache."""
     config = read_config()
     if config is None:
@@ -946,7 +948,7 @@ def cmd_update(args):
     return 0
 
 
-def cmd_validate(args):
+def cmd_validate(args: argparse.Namespace) -> int:
     """Validate state.json against schema."""
     state = read_state()
     if state is None:
@@ -980,7 +982,7 @@ def _validate_session_value(value: str, field: str, max_len: int = 256) -> str |
     return None
 
 
-def cmd_session(args):
+def cmd_session(args: argparse.Namespace) -> int:
     """Update session context in state.json."""
     state = read_state()
     if state is None:
@@ -1036,7 +1038,7 @@ def cmd_session(args):
     return 0
 
 
-def cmd_cleanup(args):
+def cmd_cleanup(args: argparse.Namespace) -> int:
     """Remove albums from cache that no longer exist on disk."""
     state = read_state()
     if state is None:
@@ -1076,7 +1078,7 @@ def cmd_cleanup(args):
     return 0
 
 
-def cmd_show(args):
+def cmd_show(args: argparse.Namespace) -> int:
     """Pretty-print current state summary."""
     state = read_state()
     if state is None:
@@ -1159,7 +1161,7 @@ def cmd_show(args):
     return 0
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description='State cache indexer for claude-ai-music-skills',
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Technical audio QC checks for pre/post mastering validation."""
+from __future__ import annotations
 
 import argparse
 import logging
@@ -7,6 +8,7 @@ import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 ALL_CHECKS = ["format", "mono", "phase", "clipping", "clicks", "silence", "spectral"]
 
 
-def _check_format(info):
+def _check_format(info: Any) -> dict[str, str]:
     """Validate sample rate, bit depth, channels, and format."""
     rate = info.samplerate
     channels = info.channels
@@ -69,7 +71,7 @@ def _check_format(info):
     }
 
 
-def _check_mono_compat(data):
+def _check_mono_compat(data: Any) -> dict[str, str]:
     """Check mono compatibility by comparing summed L+R energy to stereo."""
     if data.shape[1] < 2:
         return {"status": "PASS", "value": "0.0 dB", "detail": "Mono file, N/A"}
@@ -106,7 +108,7 @@ def _check_mono_compat(data):
     }
 
 
-def _check_phase(data, rate):
+def _check_phase(data: Any, rate: int) -> dict[str, str]:
     """Check phase correlation between L and R channels."""
     if data.shape[1] < 2:
         return {"status": "PASS", "value": "1.00", "detail": "Mono file, N/A"}
@@ -147,7 +149,7 @@ def _check_phase(data, rate):
     }
 
 
-def _check_clipping(data):
+def _check_clipping(data: Any) -> dict[str, str]:
     """Detect consecutive samples at ±0.99+ (clipping regions)."""
     clipped = np.any(np.abs(data) >= 0.99, axis=1) if data.ndim > 1 else np.abs(data) >= 0.99
 
@@ -178,7 +180,7 @@ def _check_clipping(data):
     }
 
 
-def _check_clicks(data, rate):
+def _check_clicks(data: Any, rate: int) -> dict[str, str]:
     """Detect clicks/pops using sliding RMS window comparison."""
     # Work with mono sum for detection
     if data.ndim > 1:
@@ -215,7 +217,7 @@ def _check_clicks(data, rate):
     }
 
 
-def _check_silence(data, rate):
+def _check_silence(data: Any, rate: int) -> dict[str, str]:
     """Check for excessive leading, trailing, or internal silence."""
     if data.ndim > 1:
         mono = np.mean(data, axis=1)
@@ -283,7 +285,7 @@ def _check_silence(data, rate):
     return {"status": status, "value": value, "detail": detail}
 
 
-def _check_spectral(data, rate):
+def _check_spectral(data: Any, rate: int) -> dict[str, str]:
     """Check spectral balance for missing bands or excessive energy."""
     if data.ndim > 1:
         mono = np.mean(data, axis=1)
@@ -343,7 +345,7 @@ def _check_spectral(data, rate):
     }
 
 
-def qc_track(filepath, checks=None):
+def qc_track(filepath: Path | str, checks: list[str] | None = None) -> dict[str, Any]:
     """Run QC checks on a single audio track.
 
     Args:
@@ -404,7 +406,7 @@ def qc_track(filepath, checks=None):
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Technical audio QC checks.")
     parser.add_argument(
         "path",

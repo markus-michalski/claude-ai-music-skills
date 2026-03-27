@@ -105,7 +105,7 @@ def _update_frontmatter_block(
     Returns:
         ``(True, None)`` on success, ``(False, error_string)`` on failure.
     """
-    import yaml  # type: ignore[import-untyped]
+    import yaml
 
     try:
         text = file_path.read_text(encoding="utf-8")

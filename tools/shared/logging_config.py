@@ -1,11 +1,13 @@
 """Logging configuration for bitwize-music tools."""
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from tools.shared.colors import Colors
 
@@ -24,14 +26,14 @@ class ColorFormatter(logging.Formatter):
         logging.CRITICAL: ('RED', '[CRITICAL]'),
     }
 
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         color_name, prefix = self.LEVEL_COLORS.get(record.levelno, ('NC', '[LOG]'))
         color = getattr(Colors, color_name, '')
         nc = Colors.NC
         return f"{color}{prefix}{nc} {record.getMessage()}"
 
 
-def setup_logging(name, verbose=False, quiet=False, config=None):
+def setup_logging(name: str, verbose: bool = False, quiet: bool = False, config: dict[str, Any] | None = None) -> logging.Logger:
     """Configure logging for a tool.
 
     Args:
@@ -64,7 +66,7 @@ def setup_logging(name, verbose=False, quiet=False, config=None):
     return logger
 
 
-def configure_file_logging(config):
+def configure_file_logging(config: dict[str, Any] | None) -> RotatingFileHandler | None:
     """Attach a RotatingFileHandler to the root logger if config enables it.
 
     Reads the 'logging' section from config. When enabled, creates a file

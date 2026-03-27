@@ -4,6 +4,8 @@ Provides color extraction, audio analysis, and ffmpeg helpers used by
 generate_promo_video.py and generate_album_sampler.py.
 """
 
+from __future__ import annotations
+
 import colorsys
 import logging
 import subprocess
@@ -18,10 +20,10 @@ def extract_dominant_color(image_path: Path) -> tuple[int, int, int]:
         from collections import Counter
 
         from PIL import Image
-        with Image.open(image_path) as img:
-            img = img.convert('RGB')
-            img = img.resize((100, 100))
-            pixels = list(img.getdata())
+        with Image.open(image_path) as raw_img:
+            converted = raw_img.convert('RGB')
+            resized = converted.resize((100, 100))
+            pixels = list(resized.getdata())
 
         # Filter out very dark and very light pixels
         filtered = [p for p in pixels if 30 < sum(p)/3 < 225]
@@ -129,8 +131,8 @@ def find_best_segment(audio_path: Path, duration: int = 15) -> float:
         times = librosa.times_like(rms, sr=sr, hop_length=hop_length)
 
         window_samples = int(duration * sr / hop_length)
-        best_start = 0
-        best_energy = 0
+        best_start: float = 0.0
+        best_energy: float = 0.0
 
         for i in range(len(rms) - window_samples):
             window_energy = np.mean(rms[i:i + window_samples])

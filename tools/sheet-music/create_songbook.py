@@ -15,6 +15,8 @@ Requirements:
     pip install pypdf reportlab pyyaml
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
@@ -34,6 +36,8 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+
+from typing import Any
 
 from tools.shared.logging_config import setup_logging
 
@@ -63,14 +67,14 @@ PAGE_SIZES = {
 }
 
 
-def read_config():
+def read_config() -> dict[str, Any] | None:
     """Read ~/.bitwize-music/config.yaml"""
     # Late import to avoid requiring project root on sys.path at module load
     from tools.shared.config import load_config
     return load_config()
 
 
-def get_website_from_config():
+def get_website_from_config() -> str | None:
     """Extract website URL from config (short display form, no protocol)."""
     config = read_config()
     if not config:
@@ -94,7 +98,7 @@ def get_website_from_config():
         return None
 
 
-def get_footer_url_from_config():
+def get_footer_url_from_config() -> str | None:
     """Get the footer URL for PDFs from config.
 
     Checks sheet_music.footer_url first, then falls back to urls section.
@@ -108,20 +112,20 @@ def get_footer_url_from_config():
         # Explicit footer_url takes priority
         footer = config.get('sheet_music', {}).get('footer_url')
         if footer:
-            return footer
+            return str(footer)
 
         # Fall back to urls section (keep full URL for footer)
         urls = config.get('urls', {})
         if urls:
             for key in ['website', 'soundcloud', 'bandcamp', 'spotify']:
                 if key in urls:
-                    return urls[key].rstrip('/')
+                    return str(urls[key]).rstrip('/')
         return None
     except (KeyError, TypeError, AttributeError):
         return None
 
 
-def auto_detect_cover_art(sheet_music_dir):
+def auto_detect_cover_art(sheet_music_dir: str) -> str | None:
     """Auto-detect album art by walking up from the given directory.
 
     Handles both new structure (singles/ or songbook/ inside sheet-music/)
@@ -141,7 +145,7 @@ def auto_detect_cover_art(sheet_music_dir):
     return None
 
 
-def create_title_page(title, artist, page_size, cover_image=None, website=None):
+def create_title_page(title: str, artist: str, page_size: tuple[float, float], cover_image: str | None = None, website: str | None = None) -> Any:
     """Create a title page PDF with optional cover image."""
     buffer = io.BytesIO()
     width, height = page_size
@@ -201,7 +205,7 @@ def create_title_page(title, artist, page_size, cover_image=None, website=None):
     return PdfReader(buffer).pages[0]
 
 
-def create_copyright_page(title, artist, year, page_size, website=None):
+def create_copyright_page(title: str, artist: str, year: int, page_size: tuple[float, float], website: str | None = None) -> Any:
     """Create a copyright page PDF."""
     buffer = io.BytesIO()
     width, height = page_size
@@ -243,7 +247,7 @@ def create_copyright_page(title, artist, year, page_size, website=None):
     return PdfReader(buffer).pages[0]
 
 
-def create_toc_page(tracks, page_size):
+def create_toc_page(tracks: list[tuple[str, int]], page_size: tuple[float, float]) -> Any:
     """Create a table of contents page."""
     buffer = io.BytesIO()
     width, height = page_size
@@ -293,7 +297,7 @@ def create_toc_page(tracks, page_size):
     return PdfReader(buffer).pages[0]
 
 
-def create_section_header(track_name, track_num, page_size):
+def create_section_header(track_name: str, track_num: int, page_size: tuple[float, float]) -> Any:
     """Create a section header page for each track."""
     buffer = io.BytesIO()
     width, height = page_size
@@ -312,7 +316,7 @@ def create_section_header(track_name, track_num, page_size):
     return PdfReader(buffer).pages[0]
 
 
-def create_single_title_page(track_title, artist, page_size, cover_image=None, footer_url=None):
+def create_single_title_page(track_title: str, artist: str, page_size: tuple[float, float], cover_image: str | None = None, footer_url: str | None = None) -> Any:
     """Create a title/cover page for an individual single PDF.
 
     Similar to songbook title page but focused on a single track.
@@ -361,7 +365,7 @@ def create_single_title_page(track_title, artist, page_size, cover_image=None, f
     return PdfReader(buffer).pages[0]
 
 
-def create_footer_overlay(page_size, footer_url):
+def create_footer_overlay(page_size: tuple[float, float], footer_url: str) -> Any:
     """Create a transparent overlay page with just a footer URL.
 
     Used to stamp a footer onto existing PDF pages.
@@ -378,7 +382,7 @@ def create_footer_overlay(page_size, footer_url):
     return PdfReader(buffer).pages[0]
 
 
-def add_footer_to_pdf(input_path, output_path, footer_url, page_size_name="letter"):
+def add_footer_to_pdf(input_path: str | Path, output_path: str | Path, footer_url: str, page_size_name: str = "letter") -> None:
     """Add a footer URL to every page of an existing PDF.
 
     Reads the PDF, overlays a footer on each page, writes to output_path.
@@ -398,24 +402,24 @@ def add_footer_to_pdf(input_path, output_path, footer_url, page_size_name="lette
         writer.write(f)
 
 
-def get_pdf_page_count(pdf_path):
+def get_pdf_page_count(pdf_path: str | Path) -> int:
     """Get number of pages in a PDF."""
     reader = PdfReader(pdf_path)
     return len(reader.pages)
 
 
 def create_songbook(
-    source_dir,
-    output_path,
-    title,
-    artist,
-    page_size_name="letter",
-    include_section_headers=False,
-    year=None,
-    cover_image=None,
-    website=None,
-    footer_url=None
-):
+    source_dir: str | Path,
+    output_path: str | Path,
+    title: str,
+    artist: str,
+    page_size_name: str = "letter",
+    include_section_headers: bool = False,
+    year: int | None = None,
+    cover_image: str | None = None,
+    website: str | None = None,
+    footer_url: str | None = None,
+) -> bool:
     """Create a complete songbook PDF."""
 
     page_size = PAGE_SIZES.get(page_size_name, PAGE_SIZES["letter"])
@@ -563,8 +567,8 @@ def create_songbook(
 
     # Write output
     print(f"\nWriting songbook to: {output_path}")
-    with open(output_path, "wb") as f:
-        writer.write(f)
+    with open(output_path, "wb") as out_f:
+        writer.write(out_f)
 
     # Summary
     total_pages = len(writer.pages)
@@ -577,7 +581,7 @@ def create_songbook(
     return True
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Create a distribution-ready songbook from sheet music PDFs"
     )

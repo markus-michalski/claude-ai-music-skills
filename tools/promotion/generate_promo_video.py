@@ -26,6 +26,8 @@ Usage:
     python generate_promo_video.py track.wav art.png "Song" --duration 30 --style circular
 """
 
+from __future__ import annotations
+
 import argparse
 import atexit
 import contextlib
@@ -35,6 +37,7 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 # Ensure project root is on sys.path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -61,10 +64,10 @@ from tools.shared.progress import ProgressBar
 logger = logging.getLogger(__name__)
 
 # Safety-net cleanup for temp files left behind on abnormal exit
-_temp_files_to_cleanup: list = []
+_temp_files_to_cleanup: list[str] = []
 
 
-def _cleanup_temp_files():
+def _cleanup_temp_files() -> None:
     for path in _temp_files_to_cleanup:
         with contextlib.suppress(OSError):
             os.unlink(path)
@@ -76,7 +79,7 @@ atexit.register(_cleanup_temp_files)
 _DEFAULT_CONFIG = {"artist": {"name": "bitwize"}}
 
 
-def load_config() -> dict:
+def load_config() -> dict[str, Any]:
     """Load bitwize-music config file."""
     return _load_config(fallback=_DEFAULT_CONFIG) or _DEFAULT_CONFIG
 
@@ -95,7 +98,7 @@ TITLE_FONT_SIZE = 64
 ARTIST_FONT_SIZE = 48
 
 
-def check_ffmpeg():
+def check_ffmpeg() -> bool:
     """Verify ffmpeg is installed with showwaves filter."""
     return _check_ffmpeg(require_showwaves=True)
 
@@ -394,14 +397,14 @@ def batch_process_album(
     color_hex: str = "",
     glow: float = 0.6,
     text_color: str = "",
-):
+) -> None:
     """Process all audio files in an album directory."""
     audio_extensions = {'.wav', '.mp3', '.flac', '.m4a'}
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Find audio files
-    audio_files = []
+    audio_files: list[Path] = []
     for ext in audio_extensions:
         audio_files.extend(album_dir.glob(f'*{ext}'))
 
@@ -415,7 +418,7 @@ def batch_process_album(
 
     sorted_audio = sorted(audio_files)
 
-    def _resolve_title(audio_file):
+    def _resolve_title(audio_file: Path) -> str:
         """Resolve track title from markdown or filename."""
         import re
         title = None
@@ -435,7 +438,7 @@ def batch_process_album(
             title = title.title()
         return title
 
-    def _process_one(audio_file):
+    def _process_one(audio_file: Path) -> tuple[str, str, bool]:
         """Generate promo video for a single track. Returns (name, success)."""
         title = _resolve_title(audio_file)
         output_file = output_dir / f"{audio_file.stem}_promo.mp4"
@@ -479,7 +482,7 @@ def batch_process_album(
                     logger.error("  [FAIL] %s", af.name)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description='Generate promo videos for social media ads',
         formatter_class=argparse.RawDescriptionHelpFormatter,

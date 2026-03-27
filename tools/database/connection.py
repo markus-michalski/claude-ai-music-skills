@@ -1,8 +1,10 @@
 """PostgreSQL database connection helper for bitwize-music tools."""
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +46,14 @@ def get_db_config() -> dict[str, Any] | None:
         logger.error("Cannot read config: %s", e)
         return None
 
-    db_config = config.get("database", {})
+    db_config = cast(dict[str, Any], config.get("database", {}))
     if not db_config or not db_config.get("enabled", False):
         return None
 
     return db_config
 
 
-def get_connection(db_config: dict[str, Any]):
+def get_connection(db_config: dict[str, Any]) -> Any:
     """Create a psycopg2 connection from config dict.
 
     Args:

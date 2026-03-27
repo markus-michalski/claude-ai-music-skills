@@ -6,6 +6,8 @@ Cross-platform validation to ensure no skill is forgotten in documentation.
 Run this before committing changes that add new skills.
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 from pathlib import Path
@@ -89,7 +91,7 @@ def check_help_skill(plugin_root: Path, skills: list[str]) -> list[str]:
 
     return missing
 
-def main():
+def main() -> int:
     setup_logging(__name__)
 
     logger.info("Validating skill documentation completeness...")

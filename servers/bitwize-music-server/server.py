@@ -29,11 +29,14 @@ Tool handlers are organized into modules under ``handlers/``:
     database        - Tweet/promo management via PostgreSQL
     maintenance     - Reset mastering, legacy cleanup, audio layout migration
 """
+from __future__ import annotations
+
 import logging
 import os
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 # Derive plugin root from environment or file location
 # Check CLAUDE_PLUGIN_ROOT first (standard env var), then PLUGIN_ROOT (legacy), then derive from file
@@ -114,13 +117,13 @@ class StateCache:
     Thread-safe: all public methods acquire a lock before accessing state.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._state: dict | None = None
+        self._state: dict[str, Any] | None = None
         self._state_mtime: float = 0.0
         self._config_mtime: float = 0.0
 
-    def get_state(self) -> dict:
+    def get_state(self) -> dict[str, Any]:
         """Get state, loading from disk if needed or stale."""
         with self._lock:
             if self._is_stale() or self._state is None:
@@ -128,7 +131,7 @@ class StateCache:
                 self._load_from_disk()
             return self._state or {}
 
-    def rebuild(self) -> dict:
+    def rebuild(self) -> dict[str, Any]:
         """Force full rebuild from markdown files.
 
         Thread-safe: holds the lock for the session-preservation and
@@ -165,7 +168,7 @@ class StateCache:
         )
         return state
 
-    def update_session(self, **kwargs) -> dict:
+    def update_session(self, **kwargs: Any) -> dict[str, Any]:
         """Update session fields and persist.
 
         Thread-safe: holds the lock for the entire read-modify-write cycle
@@ -212,7 +215,7 @@ class StateCache:
             state["session"] = session
             write_state(state)
             self._update_mtimes()
-            return session
+            return session  # type: ignore[no-any-return]
 
     def _is_stale(self) -> bool:
         """Check if cached state is stale."""
@@ -232,7 +235,7 @@ class StateCache:
             return True
         return False
 
-    def _load_from_disk(self):
+    def _load_from_disk(self) -> None:
         """Load state from disk into memory.
 
         If the on-disk state has a different schema version than the running
@@ -274,7 +277,7 @@ class StateCache:
                 album_count = len(self._state.get("albums", {}))
                 logger.debug("Loaded state from disk: %d albums", album_count)
 
-    def _update_mtimes(self):
+    def _update_mtimes(self) -> None:
         """Update cached mtime values."""
         try:
             if STATE_FILE.exists():
@@ -284,7 +287,7 @@ class StateCache:
         except OSError:
             pass
 
-    def get_state_ref(self) -> dict:
+    def get_state_ref(self) -> dict[str, Any]:
         """Get a direct reference to the current in-memory state dict.
 
         Unlike get_state(), this does NOT check for staleness or reload from
@@ -549,7 +552,7 @@ from handlers.text_analysis import (  # noqa: F401
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main():
+def main() -> None:
     """Start the MCP server."""
     # Enable file-based debug logging if configured
     from tools.shared.logging_config import configure_file_logging
