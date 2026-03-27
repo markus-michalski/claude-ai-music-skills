@@ -1330,6 +1330,17 @@ class TestGetPendingVerifications:
         assert "test-album" in result["albums_with_pending"]
         assert "another-album" not in result["albums_with_pending"]
 
+    def test_album_slug_normalizes_input(self):
+        """album_slug normalizes case, underscores, and spaces."""
+        state = _fresh_state()
+        state["albums"]["another-album"]["tracks"]["01-rock-song"]["sources_verified"] = "Pending"
+        mock_cache = MockStateCache(state)
+        for variant in ("Test-Album", "test_album", "TEST ALBUM"):
+            with patch.object(_shared_mod, "cache", mock_cache):
+                result = json.loads(_run(server.get_pending_verifications(album_slug=variant)))
+            assert result["total_pending_tracks"] == 1, f"Failed for variant: {variant!r}"
+            assert "test-album" in result["albums_with_pending"], f"Failed for variant: {variant!r}"
+
     def test_album_slug_no_match(self):
         """album_slug for nonexistent album returns empty."""
         mock_cache = MockStateCache()
@@ -3586,6 +3597,17 @@ class TestGetAlbumFull:
         with patch.object(_shared_mod, "cache", mock_cache):
             result = json.loads(_run(server.get_album_full("test-album", track_slugs="")))
         assert len(result["tracks"]) == 2
+
+    def test_track_slugs_normalizes_input(self):
+        """track_slugs normalizes case, underscores, and spaces."""
+        mock_cache = MockStateCache()
+        for variant in ("01-First-Track", "01_first_track", "01 first track"):
+            with patch.object(_shared_mod, "cache", mock_cache):
+                result = json.loads(_run(server.get_album_full(
+                    "test-album", track_slugs=variant,
+                )))
+            assert "01-first-track" in result["tracks"], f"Failed for variant: {variant!r}"
+            assert len(result["tracks"]) == 1, f"Failed for variant: {variant!r}"
 
     def test_track_slugs_no_match(self):
         """track_slugs for nonexistent track returns empty tracks dict."""

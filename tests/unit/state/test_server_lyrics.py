@@ -1034,6 +1034,7 @@ class TestCheckCrossTrackRepetition:
         assert "summary" in result
         assert "repeated_words" not in result
         assert "repeated_phrases" not in result
+        assert "truncated" not in result
 
     def test_summary_only_counts_accurate(self, tmp_path):
         """summary_only totals match full query totals."""
@@ -1092,10 +1093,33 @@ class TestCheckCrossTrackRepetition:
                 "test-album", min_tracks=2, max_results=1,
             )))
         # Arrays truncated
-        assert len(result["repeated_words"]) <= 1
+        assert len(result["repeated_words"]) == 1
+        assert len(result["repeated_phrases"]) <= 1
         # Summary still reflects full counts
         assert result["summary"]["flagged_words"] == full["summary"]["flagged_words"]
+        assert result["summary"]["flagged_phrases"] == full["summary"]["flagged_phrases"]
         assert result["truncated"] is True
+
+    def test_max_results_exact_boundary_not_truncated(self, tmp_path):
+        """max_results == flagged count should not set truncated."""
+        mock_cache = _build_state_with_tracks(tmp_path, {
+            "01-track": "[Verse 1]\nShadows burning midnight",
+            "02-track": "[Verse 1]\nShadows burning midnight",
+            "03-track": "[Verse 1]\nShadows burning midnight",
+        })
+        with patch.object(_shared_mod, "cache", mock_cache):
+            full = json.loads(_run(server.check_cross_track_repetition(
+                "test-album", min_tracks=2,
+            )))
+            n_words = full["summary"]["flagged_words"]
+            n_phrases = full["summary"]["flagged_phrases"]
+            max_n = max(n_words, n_phrases)
+            result = json.loads(_run(server.check_cross_track_repetition(
+                "test-album", min_tracks=2, max_results=max_n,
+            )))
+        assert result["truncated"] is False
+        assert len(result["repeated_words"]) == n_words
+        assert len(result["repeated_phrases"]) == n_phrases
 
     def test_max_results_summary_only_no_arrays(self, tmp_path):
         """summary_only=True with max_results still omits arrays."""
@@ -1110,6 +1134,7 @@ class TestCheckCrossTrackRepetition:
             )))
         assert "repeated_words" not in result
         assert "repeated_phrases" not in result
+        assert "truncated" not in result
 
 
 # =============================================================================

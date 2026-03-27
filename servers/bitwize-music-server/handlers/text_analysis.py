@@ -818,20 +818,24 @@ async def check_cross_track_repetition(
 
     all_tracks = album.get("tracks", {})
     if not all_tracks:
-        return _safe_json({
+        empty_summary = {
+            "flagged_words": 0,
+            "flagged_phrases": 0,
+            "most_repeated_word": None,
+            "most_repeated_phrase": None,
+        }
+        result: dict[str, Any] = {
             "found": True,
             "album_slug": normalized_album,
             "track_count": 0,
             "min_tracks_threshold": min_tracks,
-            "repeated_words": [],
-            "repeated_phrases": [],
-            "summary": {
-                "flagged_words": 0,
-                "flagged_phrases": 0,
-                "most_repeated_word": None,
-                "most_repeated_phrase": None,
-            },
-        })
+            "summary": empty_summary,
+        }
+        if not summary_only:
+            result["repeated_words"] = []
+            result["repeated_phrases"] = []
+            result["truncated"] = False
+        return _safe_json(result)
 
     # Per-track word and phrase sets, plus occurrence counts
     # word -> set of track slugs where it appears
