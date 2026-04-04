@@ -143,8 +143,8 @@ config/              Example config and setup docs
 
 ## Contributors
 
-<a href="https://github.com/bitwize-music"><img src="https://github.com/bitwize-music.png?size=60" width="60" height="60" alt="@bitwize-music"></a>
-<a href="https://github.com/markus-michalski"><img src="https://github.com/markus-michalski.png?size=60" width="60" height="60" alt="@markus-michalski"></a>
+<a href="https://github.com/bitwize-music"><img src="https://images.weserv.nl/?url=github.com/bitwize-music.png&h=60&w=60&fit=cover&mask=circle" width="60" height="60" alt="@bitwize-music"></a>
+<a href="https://github.com/markus-michalski"><img src="https://images.weserv.nl/?url=github.com/markus-michalski.png&h=60&w=60&fit=cover&mask=circle" width="60" height="60" alt="@markus-michalski"></a>
 
 If you make something with this, I'd genuinely love to hear it — [@bitwizemusic](https://x.com/bitwizemusic) on X or [open a discussion](https://github.com/bitwize-music-studio/claude-ai-music-skills/discussions).
 
