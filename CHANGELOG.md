@@ -7,6 +7,7 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 ## [Unreleased]
 
 ### Added
+- **Instrumental field sync validation** — validate-album warns and pre-generation-check blocks when frontmatter `instrumental` and Track Details table disagree ([#129](https://github.com/bitwize-music-studio/claude-ai-music-skills/issues/129))
 - **Guided regeneration workflow** — structured path for rejecting and regenerating tracks that don't meet quality standards ([#116](https://github.com/bitwize-music-studio/claude-ai-music-skills/issues/116))
   - CLAUDE.md: regeneration workflow documented in Status Tracking section
   - Resume: detects Generated tracks without approval (✓), offers style/lyrics/retry regeneration paths
