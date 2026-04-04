@@ -6,6 +6,11 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+## [0.83.1] - 2026-04-04
+
+### Changed
+- **README** — added star history chart and circular contributor profile icons
+
 ## [0.83.0] - 2026-04-04
 
 ### Added
