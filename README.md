@@ -143,7 +143,8 @@ config/              Example config and setup docs
 
 ## Contributors
 
-- [@markus-michalski](https://github.com/markus-michalski) — Schlager genre, German pronunciation guide, genre-creator skill, line style fix
+<a href="https://github.com/bitwize-music"><img src="https://github.com/bitwize-music.png?size=60" width="60" height="60" alt="@bitwize-music"></a>
+<a href="https://github.com/markus-michalski"><img src="https://github.com/markus-michalski.png?size=60" width="60" height="60" alt="@markus-michalski"></a>
 
 If you make something with this, I'd genuinely love to hear it — [@bitwizemusic](https://x.com/bitwizemusic) on X or [open a discussion](https://github.com/bitwize-music-studio/claude-ai-music-skills/discussions).
 
