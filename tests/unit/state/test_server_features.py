@@ -1072,3 +1072,144 @@ class TestAlbumAutoAdvancement:
         assert _status_mod._check_album_track_consistency(album, "In Progress") is None
         assert _status_mod._check_album_track_consistency(album, "Complete") is None
         assert _status_mod._check_album_track_consistency(album, "Released") is None
+
+
+# =============================================================================
+# TestExplicitFlagSync
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestExplicitFlagSync:
+    """Tests for explicit flag consistency at release.
+
+    If any track is explicit, the album must be marked explicit.
+    This is checked in the release readiness gate (update_album_status → Released).
+    """
+
+    def _make_release_ready_cache(self, tmp_path, album_explicit, track_explicit_flags):
+        """Create a cache with a Complete album ready for release attempt.
+
+        Args:
+            album_explicit: Album-level explicit flag (bool)
+            track_explicit_flags: Dict of {slug: bool} for track explicit flags
+        """
+        readme_path = tmp_path / "README.md"
+        readme_path.write_text(_SAMPLE_ALBUM_README.replace(
+            "| **Status** | In Progress |", "| **Status** | Complete |"
+        ))
+
+        # Create track files with streaming lyrics so that gate passes
+        tracks_dir = tmp_path / "tracks"
+        tracks_dir.mkdir(exist_ok=True)
+
+        state = _fresh_state()
+        state["albums"]["test-album"]["path"] = str(tmp_path)
+        state["albums"]["test-album"]["status"] = "Complete"
+        state["albums"]["test-album"]["explicit"] = album_explicit
+        state["config"]["audio_root"] = str(tmp_path / "audio")
+
+        tracks = {}
+        for slug, is_explicit in track_explicit_flags.items():
+            track_path = tracks_dir / f"{slug}.md"
+            track_path.write_text(
+                f"---\ntitle: {slug}\nstatus: Final\nexplicit: {str(is_explicit).lower()}\n---\n\n"
+                "## Streaming Lyrics\n\n```\nSome lyrics that are long enough to pass the word count "
+                "check and have enough words in them for validation\n```\n"
+            )
+            tracks[slug] = {
+                "path": str(track_path),
+                "title": slug,
+                "status": "Final",
+                "explicit": is_explicit,
+                "has_suno_link": True,
+                "sources_verified": "N/A",
+                "mtime": 1234567890.0,
+            }
+
+        state["albums"]["test-album"]["tracks"] = tracks
+
+        # Create audio dirs so audio/mastered checks pass
+        audio_dir = (
+            tmp_path / "audio" / "artists" / "test-artist" / "albums"
+            / "electronic" / "test-album"
+        )
+        mastered_dir = audio_dir / "mastered"
+        mastered_dir.mkdir(parents=True)
+        # Dummy WAV files
+        (audio_dir / "01-track.wav").write_bytes(b"\x00" * 100)
+        (mastered_dir / "01-track.wav").write_bytes(b"\x00" * 100)
+        # Album art
+        (audio_dir / "album.png").write_bytes(b"\x00" * 100)
+
+        return MockStateCache(state)
+
+    def test_explicit_track_in_non_explicit_album_blocked(self, tmp_path):
+        """Release blocked when track is explicit but album is not."""
+        mock_cache = self._make_release_ready_cache(
+            tmp_path,
+            album_explicit=False,
+            track_explicit_flags={"01-track": True, "02-track": False},
+        )
+        with patch.object(_shared_mod, "cache", mock_cache):
+            result = json.loads(_run(server.update_album_status(
+                "test-album", "Released"
+            )))
+        assert "error" in result
+        assert any("explicit" in issue.lower() for issue in result["issues"])
+
+    def test_all_explicit_tracks_in_explicit_album_passes(self, tmp_path):
+        """Release allowed when album and tracks are both explicit."""
+        mock_cache = self._make_release_ready_cache(
+            tmp_path,
+            album_explicit=True,
+            track_explicit_flags={"01-track": True, "02-track": True},
+        )
+        with patch.object(_shared_mod, "cache", mock_cache), \
+             patch.object(server, "write_state"):
+            result = json.loads(_run(server.update_album_status(
+                "test-album", "Released"
+            )))
+        assert "error" not in result
+
+    def test_no_explicit_tracks_passes(self, tmp_path):
+        """Release allowed when no tracks are explicit and album is not explicit."""
+        mock_cache = self._make_release_ready_cache(
+            tmp_path,
+            album_explicit=False,
+            track_explicit_flags={"01-track": False, "02-track": False},
+        )
+        with patch.object(_shared_mod, "cache", mock_cache), \
+             patch.object(server, "write_state"):
+            result = json.loads(_run(server.update_album_status(
+                "test-album", "Released"
+            )))
+        assert "error" not in result
+
+    def test_explicit_album_with_no_explicit_tracks_allowed(self, tmp_path):
+        """Album marked explicit with no explicit tracks is allowed (conservative)."""
+        mock_cache = self._make_release_ready_cache(
+            tmp_path,
+            album_explicit=True,
+            track_explicit_flags={"01-track": False, "02-track": False},
+        )
+        with patch.object(_shared_mod, "cache", mock_cache), \
+             patch.object(server, "write_state"):
+            result = json.loads(_run(server.update_album_status(
+                "test-album", "Released"
+            )))
+        assert "error" not in result
+
+    def test_force_overrides_explicit_mismatch(self, tmp_path):
+        """force=True bypasses explicit flag check."""
+        mock_cache = self._make_release_ready_cache(
+            tmp_path,
+            album_explicit=False,
+            track_explicit_flags={"01-track": True},
+        )
+        with patch.object(_shared_mod, "cache", mock_cache), \
+             patch.object(server, "write_state"):
+            result = json.loads(_run(server.update_album_status(
+                "test-album", "Released", force=True
+            )))
+        assert "error" not in result
