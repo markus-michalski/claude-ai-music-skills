@@ -6,6 +6,11 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+## [0.84.1] - 2026-04-05
+
+### Removed
+- **Ship skill** — internal release automation that didn't fit the plugin's music production scope; assumed a single-branch workflow incompatible with the develop → main release flow ([#145](https://github.com/bitwize-music-studio/claude-ai-music-skills/pull/145))
+
 ## [0.84.0] - 2026-04-05
 
 ### Added
