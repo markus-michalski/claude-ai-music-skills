@@ -6,6 +6,9 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+### Added
+- **Bollywood genre** — new genre `genres/bollywood/` with full documentation, 10 subgenres, 15 artists, Suno prompt keywords, and mastering presets (new "South Asian" category in INDEX.md and genre-presets)
+
 ## [0.83.1] - 2026-04-04
 
 ### Changed
