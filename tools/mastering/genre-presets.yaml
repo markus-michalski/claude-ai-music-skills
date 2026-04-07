@@ -588,6 +588,18 @@ genres:
     target_lufs: -16.0
     cut_highmid: 0
     cut_highs: 0
+  medieval:
+    target_lufs: -18.0
+    cut_highmid: 0
+    cut_highs: 0
+  madrigal:
+    target_lufs: -18.0
+    cut_highmid: 0
+    cut_highs: 0
+  ragtime:
+    target_lufs: -16.0
+    cut_highmid: -1.0
+    cut_highs: 0
 
   # === European Pop ===
   schlager:
@@ -777,6 +789,14 @@ genres:
   spoken-word:
     target_lufs: -14.0
     cut_highmid: 0
+    cut_highs: 0
+  sea-shanties:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  music-hall:
+    target_lufs: -14.0
+    cut_highmid: -1.5
     cut_highs: 0
 
   # === Legacy aliases ===
