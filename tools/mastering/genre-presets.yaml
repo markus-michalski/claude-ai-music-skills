@@ -44,6 +44,34 @@ genres:
     target_lufs: -14.0
     cut_highmid: -1.5
     cut_highs: 0
+  dream-pop:
+    target_lufs: -16.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  synth-pop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  baroque-pop:
+    target_lufs: -16.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  chamber-pop:
+    target_lufs: -16.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  bubblegum-pop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  twee-pop:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  sophisti-pop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
 
   # === Hip-Hop / Rap ===
   hip-hop:
@@ -89,6 +117,46 @@ genres:
   conscious-hip-hop:
     target_lufs: -14.0
     cut_highmid: -1.0
+    cut_highs: 0
+  east-coast-hip-hop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  west-coast-rap:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  southern-hip-hop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  gangsta-rap:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  underground-hip-hop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  crunk:
+    target_lufs: -12.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  mumble-rap:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  pop-rap:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  chicano-rap:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  country-rap:
+    target_lufs: -14.0
+    cut_highmid: -1.5
     cut_highs: 0
 
   # === R&B / Soul / Funk ===
@@ -356,6 +424,38 @@ genres:
     target_lufs: -12.0
     cut_highmid: -2.0
     cut_highs: 0
+  nightcore:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  breakcore:
+    target_lufs: -14.0
+    cut_highmid: -2.0
+    cut_highs: -1.0
+  pc-music:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  speedcore:
+    target_lufs: -12.0
+    cut_highmid: -2.0
+    cut_highs: -1.0
+  riddim:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  wave:
+    target_lufs: -16.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  complextro:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  darkwave:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
 
   # === Ambient / Chill / Atmospheric ===
   ambient:
@@ -428,6 +528,42 @@ genres:
     target_lufs: -14.0
     cut_highmid: -2.0
     cut_highs: 0
+  honky-tonk:
+    target_lufs: -14.0
+    cut_highmid: -2.0
+    cut_highs: 0
+  bro-country:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  red-dirt:
+    target_lufs: -14.0
+    cut_highmid: -2.0
+    cut_highs: 0
+  bakersfield-sound:
+    target_lufs: -14.0
+    cut_highmid: -2.0
+    cut_highs: 0
+  western-swing:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  cowpunk:
+    target_lufs: -14.0
+    cut_highmid: -2.5
+    cut_highs: 0
+  neotraditional-country:
+    target_lufs: -14.0
+    cut_highmid: -2.0
+    cut_highs: 0
+  cajun:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  swamp-pop:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
 
   # === Jazz / Blues ===
   jazz:
@@ -483,6 +619,18 @@ genres:
   cinematic:
     target_lufs: -16.0
     cut_highmid: 0
+    cut_highs: 0
+  medieval:
+    target_lufs: -18.0
+    cut_highmid: 0
+    cut_highs: 0
+  madrigal:
+    target_lufs: -18.0
+    cut_highmid: 0
+    cut_highs: 0
+  ragtime:
+    target_lufs: -16.0
+    cut_highmid: -1.0
     cut_highs: 0
 
   # === European Pop ===
@@ -616,6 +764,22 @@ genres:
     target_lufs: -14.0
     cut_highmid: -1.5
     cut_highs: 0
+  roots-reggae:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  lovers-rock:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  rocksteady:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  ragga:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
   ska:
     target_lufs: -14.0
     cut_highmid: -1.5
@@ -666,9 +830,21 @@ genres:
     cut_highs: 0
 
   # === Other ===
+  go-go:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
   spoken-word:
     target_lufs: -14.0
     cut_highmid: 0
+    cut_highs: 0
+  sea-shanties:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  music-hall:
+    target_lufs: -14.0
+    cut_highmid: -1.5
     cut_highs: 0
 
   # === Legacy aliases ===
