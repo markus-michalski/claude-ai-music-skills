@@ -44,6 +44,34 @@ genres:
     target_lufs: -14.0
     cut_highmid: -1.5
     cut_highs: 0
+  dream-pop:
+    target_lufs: -16.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  synth-pop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  baroque-pop:
+    target_lufs: -16.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  chamber-pop:
+    target_lufs: -16.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  bubblegum-pop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  twee-pop:
+    target_lufs: -14.0
+    cut_highmid: -1.5
+    cut_highs: 0
+  sophisti-pop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
 
   # === Hip-Hop / Rap ===
   hip-hop:
@@ -423,6 +451,10 @@ genres:
   complextro:
     target_lufs: -14.0
     cut_highmid: -1.0
+    cut_highs: 0
+  darkwave:
+    target_lufs: -14.0
+    cut_highmid: -1.5
     cut_highs: 0
 
   # === Ambient / Chill / Atmospheric ===
