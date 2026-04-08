@@ -52,6 +52,10 @@ genres:
     target_lufs: -14.0
     cut_highmid: -1.0
     cut_highs: 0
+  electropop:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
   baroque-pop:
     target_lufs: -16.0
     cut_highmid: -1.0
@@ -180,6 +184,10 @@ genres:
     target_lufs: -14.0
     cut_highmid: -1.0
     cut_highs: 0
+  nu-disco:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
   neo-soul:
     target_lufs: -14.0
     cut_highmid: -1.5
@@ -260,6 +268,18 @@ genres:
     target_lufs: -14.0
     cut_highmid: -2.5
     cut_highs: 0
+  crust-punk:
+    target_lufs: -14.0
+    cut_highmid: -2.5
+    cut_highs: -1.0
+  d-beat:
+    target_lufs: -14.0
+    cut_highmid: -2.5
+    cut_highs: -1.0
+  powerviolence:
+    target_lufs: -14.0
+    cut_highmid: -2.5
+    cut_highs: -1.0
   screamo:
     target_lufs: -14.0
     cut_highmid: -2.5
@@ -272,7 +292,15 @@ genres:
     target_lufs: -14.0
     cut_highmid: -2.0
     cut_highs: 0
+  riot-grrrl:
+    target_lufs: -14.0
+    cut_highmid: -2.0
+    cut_highs: 0
   emo:
+    target_lufs: -14.0
+    cut_highmid: -2.0
+    cut_highs: 0
+  oi:
     target_lufs: -14.0
     cut_highmid: -2.0
     cut_highs: 0
@@ -322,6 +350,10 @@ genres:
     target_lufs: -14.0
     cut_highmid: -3.0
     cut_highs: -1.0
+  grindcore:
+    target_lufs: -14.0
+    cut_highmid: -3.0
+    cut_highs: -1.0
   groove-metal:
     target_lufs: -14.0
     cut_highmid: -3.0
@@ -356,7 +388,27 @@ genres:
     target_lufs: -14.0
     cut_highmid: -1.0
     cut_highs: 0
+  eurodance:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
   house:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  tech-house:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  deep-house:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  french-house:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  progressive-house:
     target_lufs: -14.0
     cut_highmid: -1.0
     cut_highs: 0
@@ -416,6 +468,14 @@ genres:
     target_lufs: -14.0
     cut_highmid: -1.0
     cut_highs: 0
+  future-house:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
+  tropical-house:
+    target_lufs: -14.0
+    cut_highmid: -1.0
+    cut_highs: 0
   minimal-techno:
     target_lufs: -14.0
     cut_highmid: -1.0
@@ -455,6 +515,10 @@ genres:
   darkwave:
     target_lufs: -14.0
     cut_highmid: -1.5
+    cut_highs: 0
+  bass-house:
+    target_lufs: -14.0
+    cut_highmid: -1.0
     cut_highs: 0
 
   # === Ambient / Chill / Atmospheric ===

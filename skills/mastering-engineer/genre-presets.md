@@ -145,6 +145,22 @@ Detailed mastering settings by genre.
 - Technical/progressive death metal benefits from slightly wider dynamics to showcase rhythmic complexity
 - Old-school death metal (Morbid Angel, Death style): warmer, less polished mastering; modern (Archspire style): tighter, more clinical
 
+### Grindcore
+**LUFS target**: -14 LUFS
+**Dynamics**: Heavy compression; sustain the relentless blast-beat density; preserve the raw, chaotic energy without over-polishing; grindcore's lo-fi production aesthetic is often intentional
+**EQ focus**: Low-end density (60-200 Hz), vocal presence through distortion wall (1-4 kHz), high-mid cut to tame guitar and cymbal harshness (3-5 kHz), high shelf cut for cymbal wash control from constant blast beats
+**MCP command**: `master_audio(album_slug, genre="grindcore")`
+
+**Characteristics**:
+- Blast beats generate massive high-frequency cymbal content; high shelf cut (-1 dB at 8 kHz) essential to prevent listening fatigue across an entire album of blasting
+- Dual vocals (growls + shrieks) occupy different frequency ranges; both need presence without one dominating the other
+- Guitar and bass often blend into a single wall of distortion; do not try to separate them surgically -- the blurred density is intentional
+- Raw, lo-fi production is a genre feature in classic grindcore; do not over-process or "clean up" recordings that are intentionally crude
+- Songs are extremely short (30 seconds to 2 minutes); consistent level between tracks is important since gaps are brief
+- Deathgrind (Terrorizer, Cattle Decapitation): tighter, more death metal-influenced mastering; treat closer to death metal preset
+- Powerviolence-influenced (Nails, Full of Hell): preserve extreme tempo shifts between blasting and sludge sections; dynamic contrast matters
+- Cybergrind with electronic elements: drum machines may need different treatment than acoustic drums; preserve the mechanical quality
+
 ### Electronic / EDM
 **LUFS target**: -10 to -12 LUFS (can go louder)
 **Dynamics**: Heavy compression, consistent energy
@@ -155,6 +171,99 @@ Detailed mastering settings by genre.
 - Massive bass
 - Sustained energy
 - Bright, polished highs
+
+### Eurodance
+**LUFS target**: -14 LUFS
+**Dynamics**: Moderate compression; preserve the punch and drive of the four-on-the-floor kick while maintaining vocal clarity across both rapped and sung passages; avoid over-compression that flattens the euphoric dynamics of chorus builds
+**EQ focus**: Kick and bass punch (50-100 Hz), synth lead presence and brightness (2-8 kHz), vocal clarity for both female singing and male rapping (2-5 kHz), gentle high-mid cut to tame harsh synth stabs (3.5-5 kHz)
+**MCP command**: `master_audio(album_slug, genre="eurodance")`
+
+**Characteristics**:
+- The four-on-the-floor kick must be punchy and driving at 50-100 Hz; it is the rhythmic backbone and must stay prominent against the synth bass
+- Synth leads and pads occupy a wide frequency range (200 Hz-8 kHz); keep them bright and present without harshness, especially on supersaw and arpeggiated leads
+- Dual vocal styles (female sung choruses + male rap verses) require clarity across different frequency ranges; female vocals need presence at 3-5 kHz, male rap vocals need definition at 2-4 kHz
+- Orchestral stabs and brass hits are transient-heavy; preserve their impact without allowing them to dominate the mix
+- Sidechain pumping effect is intentional and genre-defining -- do not try to eliminate it; ensure the kick triggers the sidechain cleanly
+- Bright, polished overall tone is expected; Eurodance should sound clean and radio-ready, not lo-fi or raw
+
+### Tech House
+**LUFS target**: -14 LUFS
+**Dynamics**: Moderate compression; preserve the rolling groove and percussive dynamics that define the genre; over-compression flattens the subtle interplay between kick, bass, and layered percussion that makes tech house work on the dancefloor
+**EQ focus**: Kick punch and definition (50-80 Hz), rolling bassline presence (80-200 Hz), percussion clarity (2-5 kHz), gentle high-mid cut to tame crisp hi-hat brightness without losing groove detail (3-5 kHz)
+**MCP command**: `master_audio(album_slug, genre="tech-house")`
+
+**Characteristics**:
+- The 909-style kick drum must be tight, punchy, and well-defined at 50-80 Hz; it drives the entire track and must cut through sub-bass content cleanly
+- Rolling basslines (often mid-range, 80-200 Hz) are the harmonic backbone; keep them warm and defined without muddying the kick drum
+- Layered percussion (congas, shakers, rim shots, claps) creates the polyrhythmic groove; preserve transient clarity in the 2-5 kHz range
+- Sidechain compression pumping between kick and bass is intentional and defines the genre's rhythmic feel; preserve the breathing effect
+- Vocal chops and spoken samples are rhythmic elements, not melodic features; they should sit inside the mix, not on top of it
+- Sub-bass content should be controlled and tight, not boomy; tech house favors mid-bass punch over deep sub-bass weight
+- Minimal tech house variants: slightly wider dynamics, more space in the mix; bass-heavy festival variants: tighter compression, stronger low end acceptable
+- Extended DJ intros and outros should maintain consistent level with the body of the track
+
+### Electropop
+**LUFS target**: -14 LUFS (club-oriented tracks: -12 LUFS)
+**Dynamics**: Moderate-to-heavy compression; preserve the punch and clarity of electronic drums while maintaining vocal presence; the genre demands a polished, radio-ready loudness without squashing the synth dynamics
+**EQ focus**: Vocal clarity and presence (2-5 kHz), synth pad warmth (200-600 Hz), sub-bass definition (40-80 Hz), gentle high-mid cut (-1 dB at 3.5 kHz) to tame bright synth stacks without killing the sparkle
+**MCP command**: `master_audio(album_slug, genre="electropop")`
+
+**Characteristics**:
+- Vocals are always the centerpiece -- clear, present, and forward in the mix; processed vocals (auto-tune, layering) should remain intelligible
+- Synth layers occupy a wide frequency range; careful EQ separation prevents masking between pads, arpeggios, and bass synth
+- Electronic kick and snare need punch and definition; sidechain compression on synths against the kick is often baked into the mix -- preserve that pumping effect
+- Sub-bass (40-80 Hz) should be tight and controlled, not boomy; electropop bass sits higher than EDM bass
+- Bright, polished high end (8-12 kHz) for shimmer and air, but watch for harshness from stacked synth harmonics
+- Dark electropop (Depeche Mode style): slightly wider dynamics, warmer treatment, can target -15 LUFS
+- Club-oriented tracks can push to -12 LUFS with heavier limiting for dancefloor energy
+- Indie electropop: slightly less compression than mainstream; preserve lo-fi textures if intentional
+
+### Deep House
+**LUFS target**: -14 LUFS
+**Dynamics**: Light-to-moderate compression; preserve the warm, open groove and subtle dynamic shifts; deep house lives in its spaciousness -- over-compression kills the late-night intimacy and hypnotic feel
+**EQ focus**: Sub-bass warmth (40-80 Hz), Rhodes/keys presence (200-500 Hz), vocal sample clarity (2-4 kHz), gentle high-mid cut at 3.5 kHz to tame hi-hat harshness, airy top-end for reverb tails (10+ kHz)
+**MCP command**: `master_audio(album_slug, genre="deep-house")`
+
+**Characteristics**:
+- Sub-bass should be warm and round, not aggressive or punchy -- deep house bass is felt more than heard, sitting lower than tech house or mainroom house
+- Kick drum has a softer attack than peak-time house; preserve the pillowy, warm character rather than pushing for maximum transient impact
+- Rhodes, Wurlitzer, and jazz guitar samples sit in the 200-500 Hz range; keep them warm and defined without muddiness
+- Reverb and delay are integral to the spatial atmosphere -- mastering should preserve the depth and width of the mix; avoid limiting that flattens the stereo image
+- Soulful vocal samples and spoken word elements need warmth and intimacy at 2-4 kHz; avoid harshness that breaks the dreamy quality
+- Shuffled hi-hats and subtle percussion (shakers, rim clicks) at 8-12 kHz drive the groove; preserve their crisp detail without brightness fatigue over long listening sessions
+- Afro deep house variants may have more percussive energy; organic house variants should be treated even more gently with wider dynamics
+
+### Nu Disco
+**LUFS target**: -14 LUFS (cosmic/slow-motion strains: -15 LUFS)
+**Dynamics**: Moderate compression; preserve the warm groove and dynamic builds; nu disco's filtered sweeps and gradual arrangement layering need headroom -- over-compression flattens the build-and-release that drives the dance floor
+**EQ focus**: Bass warmth and groove (60-200 Hz), synth and vocal clarity (2-5 kHz), gentle high-mid cut at 3.5 kHz to tame harshness from layered synths, sparkle on hi-hats and percussion (8-12 kHz)
+**MCP command**: `master_audio(album_slug, genre="nu-disco")`
+
+**Characteristics**:
+- Sidechain compression pumping is an intentional stylistic element -- do not try to smooth it out; the "breathing" effect on synth pads and bass is central to the genre's feel
+- Bass should be warm, round, and melodic (funk/disco tradition) rather than sub-heavy; it sits higher than EDM bass (60-200 Hz)
+- Filter sweeps on synths and samples are compositional tools -- preserve their full frequency range and dynamic arc
+- Soulful vocals need warmth and presence without harshness; vocoder and processed vocals at 2-4 kHz should remain clear and defined
+- Cosmic/space disco strains (-15 LUFS): wider dynamics, more reverb headroom, gentler compression for the hypnotic, spaced-out quality
+- Disco house and club-oriented tracks: tighter compression acceptable, punchier kick at 60-80 Hz, brighter top end for peak-time energy
+- String and brass samples (real or synthesized) add orchestral warmth at 200-600 Hz; keep them lush without muddiness
+- Extended mixes (5-8 minutes) need consistent energy across their duration; avoid limiting that causes fatigue over long DJ sets
+
+### Progressive House
+**LUFS target**: -14 LUFS (deep progressive: -15 LUFS)
+**Dynamics**: Light-to-moderate compression; preserve the gradual builds and extended dynamic arcs that define the genre; progressive house lives in the tension between quiet breakdowns and euphoric peaks -- over-compression destroys this emotional architecture
+**EQ focus**: Pad warmth and body (200-600 Hz), synth lead clarity (1-4 kHz), sub-bass definition (40-80 Hz), gentle high-mid cut to tame bright synth harmonics without losing shimmer (3-5 kHz)
+**MCP command**: `master_audio(album_slug, genre="progressive-house")`
+
+**Characteristics**:
+- Extended builds (32-64 bars) rely on gradual dynamic increase -- over-limiting flattens the arc and removes the emotional payoff at the climax
+- Layered pads and atmospheric textures occupy the mid-range (200 Hz-2 kHz); preserve their warmth and spatial depth without muddiness
+- Four-on-the-floor kick must remain consistent and punchy (60-80 Hz) but not dominate; it anchors the groove while melodies carry the emotion
+- Reverb tails, delay trails, and filtered sweeps are compositional elements -- over-compression collapses the spatial depth that defines the genre
+- Deep progressive (Guy J, Hernan Cattaneo style): target -15 LUFS, wider dynamics, more spacious and hypnotic; minimal compression to preserve subtle textural shifts
+- Big room progressive (festival variant): can push to -14 LUFS with tighter compression; punchier kick, brighter leads, less subtlety acceptable
+- Sidechain compression pumping on pads is intentional and genre-defining; preserve the rhythmic breathing effect
+- Melodic progressive (Eric Prydz, deadmau5 style): synth leads in the 1-4 kHz range need clarity and emotional presence without harshness
 
 ### Jungle
 **LUFS target**: -14 LUFS
@@ -780,6 +889,36 @@ Detailed mastering settings by genre.
 - Pop-punk revival (Modern Baseball, PUP): slightly rawer, more dynamic; classic: polished and compressed
 - Double-tracked vocals and gang vocals are common; keep them full but not smeared
 
+### Riot Grrrl
+**LUFS target**: -14 LUFS
+**Dynamics**: Moderate compression; preserve the raw, unpolished energy that defines the genre; riot grrrl's lo-fi aesthetic is intentional, not a deficiency -- over-compression removes the garage-recording character
+**EQ focus**: Vocal presence and clarity (2-5 kHz), guitar distortion body (800 Hz-2 kHz), bass weight (80-200 Hz), gentle high-mid cut to tame lo-fi harshness without sterilizing the sound (3-5 kHz)
+**MCP command**: `master_audio(album_slug, genre="riot-grrrl")`
+
+**Characteristics**:
+- Vocals are confrontational and forward -- shouted, chanted, or spoken-word delivery must remain urgent and present; do not bury them behind instrumentation
+- Lo-fi recording quality is a feature, not a bug -- room noise, bleed, and tape hiss are authentic; do not over-clean or gate aggressively
+- Guitar distortion is raw and fuzzy, not tight or polished; preserve the garage-punk character in the 800 Hz-2 kHz range
+- Call-and-response and gang vocal sections need clarity without losing their rough, communal energy
+- Bikini Kill-style raw punk: minimal processing, preserve the cassette-tape aesthetic; Sleater-Kinney-style: slightly more polished, tighter low end
+- Bass guitar often follows guitar closely, creating a thick low-mid wall; keep it warm and present but defined enough that the rhythm stays clear
+- High-mid harshness at 3-5 kHz from lo-fi recordings: gentle cuts only (-2 dB), aggressive cutting removes the abrasive edge that is part of the genre's identity
+
+### Powerviolence
+**LUFS target**: -14 LUFS
+**Dynamics**: Heavy compression acceptable; the genre is already maximally dense and aggressive; preserve the contrast between blast-beat sections and sludge breakdowns -- the tempo shifts are the genre's defining structural element and must feel violent, not smoothed
+**EQ focus**: Bass distortion weight (40-200 Hz), guitar fizz and dissonance (800 Hz-3 kHz), vocal presence through the chaos (1-4 kHz), high-mid cut for harshness control (3-5 kHz), gentle high shelf cut to tame cymbal wash during blast sections
+**MCP command**: `master_audio(album_slug, genre="powerviolence")`
+
+**Characteristics**:
+- Blast-beat to sludge tempo shifts are the genre's signature -- these transitions must hit hard; compression should not soften the whiplash effect
+- Bass guitar and bass distortion are often as loud as or louder than guitar; keep the low end thick and present, not clean
+- Lo-fi production is intentional and genre-appropriate -- do not try to polish or brighten a deliberately raw mix; the ugliness is the point
+- Vocals are screamed and panicked; preserve the urgency and hysteria without introducing painful high-frequency harshness
+- Classic PV (Infest, Man Is the Bastard): rawer, more lo-fi tolerant; modern PV (Nails, Weekend Nachos): tighter, heavier, more metallic
+- Songs are extremely short (many under 30 seconds); every fraction of a second matters for clarity and impact
+- High-frequency content from cymbals during blast beats can become overwhelming; gentle high shelf cut at 8 kHz tames the wash without dulling the attack
+
 ### Screamo
 **LUFS target**: -14 LUFS
 **Dynamics**: Moderate-to-heavy compression; preserve the explosive dynamics between quiet passages and screamed eruptions; the emotional contrast is the genre's core
@@ -793,6 +932,54 @@ Detailed mastering settings by genre.
 - Saetia/Orchid-style chaotic screamo: rawer, more dynamic, lo-fi tolerance; post-screamo (Touche Amore): tighter, more produced
 - Bass guitar often provides melodic counterpoint; keep it defined and present
 - Short song formats (1-3 minutes) mean every second is dense; clarity is critical throughout
+
+### Oi!
+**LUFS target**: -14 LUFS
+**Dynamics**: Moderate compression; preserve the gang vocal energy and singalong dynamics; the pub-rock aesthetic needs punch without excessive polish; avoid over-compressing crowd-style vocal layers into a flat wall
+**EQ focus**: Vocal presence and clarity (2-5 kHz), guitar power chord body (200 Hz-2 kHz), bass punch (80-200 Hz), gentle high-mid cut to tame guitar harshness without killing the rawness (3-5 kHz)
+**MCP command**: `master_audio(album_slug, genre="oi")`
+
+**Characteristics**:
+- Vocals are the centerpiece -- gruff, shouted lead vocals and gang vocal choruses must be clear, forward, and singable; preserve the raw character without letting it become harsh
+- Gang vocals and terrace-style chanting generate dense mid-range content; keep the layers distinct and powerful, not smeared
+- Guitar tone is moderately distorted -- less gain than hardcore punk, more than pub rock; preserve the power chord attack and body
+- Bass guitar follows root notes with occasional melodic runs; keep it punchy and defined at 80-200 Hz without muddying the guitars
+- Drum production should be punchy and live-sounding; snare backbeat drives the songs; avoid overly processed or triggered drum sounds
+- Classic Oi! (Sham 69, Cockney Rejects): rawer, more lo-fi tolerant; modern Oi! (Booze & Glory, Lion's Law): slightly tighter, cleaner, but still pub-ready
+- Anthemic, slower tracks (Cock Sparrer-style, 120-130 BPM): slightly wider dynamics to let the singalong choruses breathe and build
+- The genre's live, communal energy should carry through to the master -- clinical perfection is antithetical to Oi!
+
+### D-Beat
+**LUFS target**: -14 LUFS
+**Dynamics**: Moderate-to-heavy compression; sustain the relentless wall-of-sound intensity without crushing the galloping drum pattern that defines the genre; the D-beat must remain driving and articulate
+**EQ focus**: Guitar distortion body (200 Hz-2 kHz), bass rumble (60-200 Hz), vocal presence through the distortion wall (1-4 kHz), high-mid cut to tame guitar fizz and cymbal harshness (3-5 kHz), gentle high shelf cut for blown-out cymbal wash
+**MCP command**: `master_audio(album_slug, genre="d-beat")`
+
+**Characteristics**:
+- The signature D-beat drum pattern (galloping snare-kick alternation) is the genre's identity -- it must remain driving and articulate; over-compression blurs it into undifferentiated noise
+- Guitar distortion is thick and all-consuming; preserve the wall-of-sound character without letting it become a featureless wash
+- Bass guitar provides rumbling low-end foundation; keep it felt rather than heard clearly -- it adds weight, not melody
+- Vocals are shouted and raw, often buried in the mix; preserve their presence at 1-4 kHz without pushing them artificially forward -- D-beat vocals sit inside the distortion, not on top of it
+- High-frequency content from cymbals and guitar fizz can cause listening fatigue; gentle high shelf cut (-1 dB at 8 kHz) helps without dulling the aggression
+- Classic D-beat (Discharge, Varukers): rawer, lo-fi-tolerant mastering; modern D-beat crust (Wolfbrigade, Disfear): slightly tighter, more defined, but still aggressive
+- Noise D-beat (Disclose, Framtid): the blown-out, feedback-heavy production is intentional -- do not try to clean it up; treat it like noise rock mastering with even less restraint
+
+### Crust Punk
+**LUFS target**: -14 LUFS (neocrust with post-rock dynamics: -15 LUFS)
+**Dynamics**: Moderate-to-heavy compression; preserve the contrast between slow crushing sections and fast d-beat blasts; crust punk relies on oppressive weight and frantic energy existing in the same track -- over-compression flattens both
+**EQ focus**: Low-end body and distortion weight (40-200 Hz), vocal presence through the distortion wall (1-4 kHz), guitar distortion character (800 Hz-3 kHz), high-mid cut to control harshness without removing the abrasive edge (3-5 kHz), gentle high shelf cut for murky aesthetic (-1 dB at 8 kHz)
+**MCP command**: `master_audio(album_slug, genre="crust-punk")`
+
+**Characteristics**:
+- Raw, murky production is intentional -- do not try to clean up the mix or add clarity; the lo-fi aesthetic is the genre's identity
+- Bass distortion and guitar distortion occupy overlapping frequency ranges by design; separation is less important than combined crushing weight
+- Vocals are harsh (screamed, shouted, growled) and often buried in the mix; preserve their presence without pushing them artificially forward
+- D-beat drumming needs its rhythmic pattern preserved; the syncopated snare-kick pattern must remain recognizable through the distortion
+- Stenchcore (Amebix, Antisect style): mid-tempo, doom-influenced, heavier compression acceptable for sustained crushing weight
+- Neocrust (Tragedy, From Ashes Rise): wider dynamics to accommodate post-rock builds and melodic guitar harmonies; target -15 LUFS
+- Blackened crust: tremolo riffing and blast beats generate dense high-frequency content; gentle high shelf cut prevents fatigue
+- Sludge crust (Dystopia, His Hero Is Gone): treat like sludge metal mastering -- oppressive, heavy, feedback-tolerant
+- Dual vocal arrangements (screamer + growler) need both voices present; do not let one dominate
 
 ### Groove Metal
 **LUFS target**: -14 LUFS
@@ -877,6 +1064,20 @@ Detailed mastering settings by genre.
 - Flume-style: grittier, more textured, experimental; ODESZA-style: warmer, more organic, cinematic
 - Build-ups and drops are the emotional core; preserve the dynamic contrast between quiet breaks and full drops
 - Side-chain compression effects are compositional; preserve the pumping feel if present
+
+### Future House
+**LUFS target**: -14 LUFS
+**Dynamics**: Moderate compression; preserve the sidechain pumping effect and dynamic contrast between breakdowns and drops; the genre's groove depends on the rhythmic push-pull between kick and bass
+**EQ focus**: FM bass clarity and body (80-300 Hz), vocal chop presence (2-6 kHz), kick definition (40-80 Hz), hi-hat crispness (8-12 kHz), synth pluck brightness (1-4 kHz)
+**MCP command**: `master_audio(album_slug, genre="future-house")`
+
+**Characteristics**:
+- The FM/frequency-modulated bassline is the genre's signature sound -- metallic, elastic, and rubbery; preserve its tonal character and movement without muddiness
+- Sidechain compression pumping is a compositional element, not a mixing artifact; the rhythmic ducking of the bass against the kick must remain pronounced and groovy
+- Pitched vocal chops function as melodic hooks; they need clarity and presence in the 2-6 kHz range without harshness
+- Oliver Heldens-style: brighter, poppier, more melodic; Tchami-style: darker, funkier, heavier bass
+- Builds and drops define the energy arc; preserve the contrast between stripped breakdowns and full drops
+- Clean, polished production is expected; the genre rewards a precise, modern-sounding master over warmth or analog character
 
 ### Minimal Techno
 **LUFS target**: -14 LUFS
@@ -1087,6 +1288,36 @@ Detailed mastering settings by genre.
 - Piano is the primary accompaniment; keep it warm and supportive without competing with the voice
 - Brass and wind instruments add color; clear without harshness
 - The intimate venue atmosphere should carry through; do not over-brighten or make it sound like a stadium
+
+### Tropical House
+**LUFS target**: -14 LUFS
+**Dynamics**: Light compression; preserve the breezy, open feel and the sidechain pump that defines the groove; avoid over-compressing -- tropical house relies on space and air between elements
+**EQ focus**: Warm low-end (60-150 Hz), marimba/pan flute clarity (1-5 kHz), vocal presence (2-4 kHz), gentle high-mid cut to tame digital synth harshness (3-5 kHz), airy highs (10+ kHz)
+**MCP command**: `master_audio(album_slug, genre="tropical-house")`
+
+**Characteristics**:
+- Marimba, steel drums, and pan flute sit in the 1-5 kHz range -- preserve their brightness and attack without harshness; these are the genre's signature timbres
+- Soft kick drums should be warm and round, not punchy or aggressive; avoid boosting kick transients
+- Sidechain compression on pads is a core production technique -- the pumping effect is intentional and should be preserved through mastering
+- Vocals are soft and breathy; they need presence at 2-4 kHz without sibilance; de-essing may be needed
+- Acoustic guitar and plucked synths need clarity without sharpness; warm low-mids (200-400 Hz) add body
+- The overall mix should feel warm, spacious, and polished -- do not add aggression or density that contradicts the genre's laid-back character
+- Hi-hats and shakers provide subtle rhythmic texture; preserve their sparkle at 8-12 kHz without letting them dominate
+
+### Bass House
+**LUFS target**: -14 LUFS
+**Dynamics**: Moderate-to-heavy compression; sustain the energy and impact of the bass drop while preserving the four-on-the-floor groove; the distorted bass must feel heavy and physical without losing definition against the kick drum
+**EQ focus**: Sub-bass weight (30-60 Hz), distorted mid-bass presence and definition (80-400 Hz), kick drum punch (60-100 Hz), hi-hat and percussion crispness (8-12 kHz), gentle high-mid cut to tame synth harshness in the bass design (3-5 kHz)
+**MCP command**: `master_audio(album_slug, genre="bass-house")`
+
+**Characteristics**:
+- The distorted bassline is the genre's centerpiece -- it must be heavy, present, and felt physically; preserve the saturation and harmonic content that gives bass house its gritty character
+- Kick and bass must coexist cleanly despite occupying overlapping frequency ranges; tight sidechain compression between kick and bass is essential to maintain the pumping groove
+- Sub-bass (30-60 Hz) provides the foundation beneath the distorted mid-bass (80-400 Hz); careful layering separation prevents mud without thinning the combined impact
+- Vocal chops and samples are production elements, not lead vocals; keep them punchy and defined but not competing with the bass for attention
+- Festival-ready variants (Jauz, Habstrakt style): can push slightly louder, more aggressive limiting; underground/Night Bass style: slightly more dynamic, groove-focused
+- Builds and breakdowns create tension-release arcs; preserve the contrast between stripped-back sections and full bass drops
+- Hi-hats and percussion should remain crisp and swung; over-compression flattens the groove feel that distinguishes bass house from straight EDM
 
 ---
 
