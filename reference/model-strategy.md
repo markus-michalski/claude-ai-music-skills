@@ -12,7 +12,7 @@ This document explains the rationale for which Claude model is assigned to each 
 
 ---
 
-## Opus 4.5 Skills (6 skills)
+## Opus 4.5 Skills (7 skills)
 
 These skills directly impact music quality or have high error costs.
 
@@ -43,6 +43,16 @@ Bad style prompts = bad music. Every regeneration costs time. Getting it right t
 - Balancing artistic ambition with achievability
 
 A weak concept produces a weak album. Spending Opus here prevents wasted effort on a fundamentally flawed foundation.
+
+### lyric-refiner
+**Why Opus**: Multi-pass refinement requires the same creative depth as writing. This skill must:
+- Make nuanced judgment calls about what to tighten vs. preserve
+- Evaluate cross-track cohesion across an entire album's lyrics
+- Identify subtle vocabulary drift and tonal inconsistencies
+- Add callback phrases that feel organic, not forced
+- Balance competing concerns (tightening vs. preserving voice, cohesion vs. distinctiveness)
+
+Refinement is surgical — a weaker model might over-tighten, break voice consistency, or miss cohesion opportunities. The stakes are the same as writing: bad refinement degrades good lyrics.
 
 ### lyric-reviewer
 **Why Opus**: This is the quality gate before Suno generation. If issues slip through, they become embedded in the music. This skill requires:
