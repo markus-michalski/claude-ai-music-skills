@@ -7,7 +7,7 @@ This document explains the rationale for which Claude model is assigned to each 
 | Model | Strengths | Cost | When to Use |
 |-------|-----------|------|-------------|
 | **Opus 4.6** | Highest creative quality, nuanced judgment, complex synthesis | ~15x | Output directly impacts music quality; errors are costly |
-| **Sonnet 4.5** | Strong reasoning, good creativity, reliable coordination | ~5x | Most tasks; balance of capability and efficiency |
+| **Sonnet 4.6** | Strong reasoning, good creativity, reliable coordination | ~5x | Most tasks; balance of capability and efficiency |
 | **Haiku 4.5** | Fastest, pattern matching, rule-following | 1x | Simple operations; binary decisions; no judgment needed |
 
 ---
@@ -83,7 +83,7 @@ If the verifier misses something, errors reach the human reviewer or the public.
 
 ---
 
-## Sonnet 4.5 Skills (30 skills)
+## Sonnet 4.6 Skills (30 skills)
 
 These skills require reasoning and moderate creativity but follow established patterns.
 
@@ -253,7 +253,7 @@ Is it purely pattern matching, file operations, or static info?
 | Tier | Count | Percentage | Purpose |
 |------|-------|------------|---------|
 | Opus 4.6 | 7 | 13.2% | Music-defining output, high error cost |
-| Sonnet 4.5 | 30 | 58.8% | Reasoning, coordination, moderate creativity |
+| Sonnet 4.6 | 30 | 58.8% | Reasoning, coordination, moderate creativity |
 | Haiku 4.5 | 15 | 29.4% | Rule-based operations, no judgment |
 
 The plugin reserves Opus for skills where quality directly impacts the music or where errors have significant consequences. Most work happens at Sonnet tier. Haiku handles mechanical operations where speed matters more than nuance.
