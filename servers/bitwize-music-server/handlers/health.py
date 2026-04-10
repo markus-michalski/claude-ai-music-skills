@@ -85,7 +85,7 @@ def _find_plugin_cache_dir() -> Path | None:
     return candidates[0]
 
 
-def _check_skill_registration() -> dict:
+def _check_skill_registration() -> dict[str, Any]:
     """Compare on-disk skills against the Claude Code plugin cache.
 
     Scans ``{PLUGIN_ROOT}/skills/*/SKILL.md`` for the canonical set of
@@ -138,7 +138,7 @@ def _check_skill_registration() -> dict:
 
     status = "ok" if not missing and not ghost else "stale"
 
-    result: dict = {
+    result: dict[str, Any] = {
         "status": status,
         "source_count": len(source_skills),
         "cached_count": len(cached_skills),
