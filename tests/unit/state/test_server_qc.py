@@ -1574,4 +1574,197 @@ class TestCleanupLegacyVenvs:
         assert result["stale_venvs_found"] == 1
         assert result["results"]["cloud-env"]["status"] == "deleted"
         assert result["results"]["mastering-env"]["status"] == "not_found"
-        assert result["results"]["promotion-env"]["status"] == "not_found"
+
+
+# =============================================================================
+# Tests for mastering staging directory behaviour
+# =============================================================================
+
+
+class TestMasterAlbumStaging:
+    """Tests that mastering uses a staging directory to prevent orphaned files."""
+
+    def setup_method(self):
+        self._orig_cache = _shared_mod.cache
+        _shared_mod.cache = MockStateCache(_fresh_state())
+
+    def teardown_method(self):
+        _shared_mod.cache = self._orig_cache
+
+    def _make_audio_dir(self, tmp_path, num_tracks=3):
+        audio_dir = tmp_path / "artists" / "test-artist" / "albums" / "electronic" / "test-album"
+        audio_dir.mkdir(parents=True)
+        for i in range(num_tracks):
+            (audio_dir / f"{i+1:02d}-track-{i+1}.wav").write_bytes(b"")
+        state = _fresh_state()
+        state["config"]["audio_root"] = str(tmp_path)
+        state["config"]["artist_name"] = "test-artist"
+        return audio_dir, state
+
+    def _mock_analyze(self, filename, lufs=-14.0):
+        return {
+            "filename": filename,
+            "duration": 180.0,
+            "sample_rate": 44100,
+            "lufs": lufs,
+            "peak_db": -1.5,
+            "rms_db": -18.0,
+            "dynamic_range": 17.0,
+            "band_energy": {"sub_bass": 5, "bass": 20, "low_mid": 15,
+                            "mid": 30, "high_mid": 20, "high": 8, "air": 2},
+            "tinniness_ratio": 0.3,
+        }
+
+    def _mock_qc_result(self, filename, verdict="PASS"):
+        return {
+            "filename": filename,
+            "checks": {
+                "format": {"status": "PASS", "value": "PCM_16 44100Hz 2ch", "detail": "OK"},
+                "mono": {"status": "PASS", "value": "0.0 dB", "detail": "OK"},
+                "phase": {"status": "PASS", "value": "0.95", "detail": "OK"},
+                "clipping": {"status": "PASS", "value": "0 regions", "detail": "OK"},
+                "clicks": {"status": "PASS", "value": "0 found", "detail": "OK"},
+                "silence": {"status": "PASS", "value": "L:0.0s T:0.0s", "detail": "OK"},
+                "spectral": {"status": "PASS", "value": "B:30% M:40% H:30%", "detail": "OK"},
+            },
+            "verdict": verdict,
+        }
+
+    def test_failed_mastering_leaves_no_orphans(self, tmp_path):
+        """If mastering raises mid-batch, mastered/ should be absent or empty."""
+        audio_dir, state = self._make_audio_dir(tmp_path, num_tracks=3)
+        mock_cache = MockStateCache(state)
+
+        call_count = [0]
+
+        def mock_master(input_path, output_path, **kwargs):
+            call_count[0] += 1
+            if call_count[0] >= 3:
+                raise RuntimeError("simulated mastering crash")
+            # Write to the output path that was given (staging dir)
+            Path(output_path).write_bytes(b"")
+            return {
+                "original_lufs": -20.0,
+                "final_lufs": -14.0,
+                "gain_applied": 6.0,
+                "final_peak": -1.5,
+            }
+
+        with patch.object(_shared_mod, "cache", mock_cache), \
+             patch.object(_processing_helpers, "_check_mastering_deps", return_value=None), \
+             patch("tools.mastering.master_tracks.load_genre_presets", return_value={}), \
+             patch("tools.mastering.master_tracks.master_track", side_effect=mock_master), \
+             patch("tools.mastering.analyze_tracks.analyze_track",
+                   side_effect=lambda f: self._mock_analyze(Path(f).name)), \
+             patch("tools.mastering.qc_tracks.qc_track",
+                   side_effect=lambda f, c=None: self._mock_qc_result(Path(f).name)):
+            with pytest.raises(RuntimeError, match="simulated mastering crash"):
+                _run(server.master_album("test-album"))
+
+        # mastered/ must not exist or must be empty — no orphaned files
+        mastered_dir = audio_dir / "mastered"
+        if mastered_dir.exists():
+            orphans = list(mastered_dir.iterdir())
+            assert orphans == [], f"mastered/ contains orphaned files: {orphans}"
+
+        # staging dir must also be cleaned up
+        staging_dir = audio_dir / ".mastering_staging"
+        assert not staging_dir.exists(), ".mastering_staging was not cleaned up after failure"
+
+    def test_successful_mastering_populates_mastered_dir(self, tmp_path):
+        """On full success, mastered/ contains all tracks and staging is gone."""
+        audio_dir, state = self._make_audio_dir(tmp_path, num_tracks=2)
+        mock_cache = MockStateCache(state)
+
+        def mock_master(input_path, output_path, **kwargs):
+            Path(output_path).write_bytes(b"")
+            return {
+                "original_lufs": -20.0,
+                "final_lufs": -14.0,
+                "gain_applied": 6.0,
+                "final_peak": -1.5,
+            }
+
+        with patch.object(_shared_mod, "cache", mock_cache), \
+             patch.object(_processing_helpers, "_check_mastering_deps", return_value=None), \
+             patch("tools.mastering.master_tracks.load_genre_presets", return_value={}), \
+             patch("tools.mastering.master_tracks.master_track", side_effect=mock_master), \
+             patch("tools.mastering.analyze_tracks.analyze_track",
+                   side_effect=lambda f: self._mock_analyze(Path(f).name, lufs=-14.0)), \
+             patch("tools.mastering.qc_tracks.qc_track",
+                   side_effect=lambda f, c=None: self._mock_qc_result(Path(f).name)), \
+             patch.object(server, "write_state"):
+            result = json.loads(_run(server.master_album("test-album")))
+
+        assert result["stage_reached"] == "complete"
+
+        # All 2 WAV files must be present in mastered/
+        mastered_dir = audio_dir / "mastered"
+        assert mastered_dir.exists(), "mastered/ was not created"
+        mastered_wavs = sorted(f.name for f in mastered_dir.iterdir() if f.suffix == ".wav")
+        assert mastered_wavs == ["01-track-1.wav", "02-track-2.wav"]
+
+        # Staging dir must be gone
+        staging_dir = audio_dir / ".mastering_staging"
+        assert not staging_dir.exists(), ".mastering_staging was not cleaned up after success"
+
+    def test_stale_staging_dir_is_cleared_before_run(self, tmp_path):
+        """A leftover .mastering_staging from a previous crash is wiped before the next run."""
+        audio_dir, state = self._make_audio_dir(tmp_path, num_tracks=1)
+        mock_cache = MockStateCache(state)
+
+        # Plant a stale staging file from a previous hypothetical run
+        staging_dir = audio_dir / ".mastering_staging"
+        staging_dir.mkdir()
+        stale_file = staging_dir / "stale-artifact.wav"
+        stale_file.write_bytes(b"stale")
+
+        def mock_master(input_path, output_path, **kwargs):
+            Path(output_path).write_bytes(b"")
+            return {
+                "original_lufs": -20.0,
+                "final_lufs": -14.0,
+                "gain_applied": 6.0,
+                "final_peak": -1.5,
+            }
+
+        with patch.object(_shared_mod, "cache", mock_cache), \
+             patch.object(_processing_helpers, "_check_mastering_deps", return_value=None), \
+             patch("tools.mastering.master_tracks.load_genre_presets", return_value={}), \
+             patch("tools.mastering.master_tracks.master_track", side_effect=mock_master), \
+             patch("tools.mastering.analyze_tracks.analyze_track",
+                   side_effect=lambda f: self._mock_analyze(Path(f).name, lufs=-14.0)), \
+             patch("tools.mastering.qc_tracks.qc_track",
+                   side_effect=lambda f, c=None: self._mock_qc_result(Path(f).name)), \
+             patch.object(server, "write_state"):
+            result = json.loads(_run(server.master_album("test-album")))
+
+        assert result["stage_reached"] == "complete"
+
+        # stale artifact must NOT appear in mastered/
+        mastered_dir = audio_dir / "mastered"
+        mastered_names = [f.name for f in mastered_dir.iterdir()]
+        assert "stale-artifact.wav" not in mastered_names
+
+    def test_all_silent_cleans_staging(self, tmp_path):
+        """When all tracks are skipped (silent), staging is cleaned up on the fail path."""
+        audio_dir, state = self._make_audio_dir(tmp_path, num_tracks=1)
+        mock_cache = MockStateCache(state)
+
+        def mock_master(input_path, output_path, **kwargs):
+            return {"skipped": True}
+
+        with patch.object(_shared_mod, "cache", mock_cache), \
+             patch.object(_processing_helpers, "_check_mastering_deps", return_value=None), \
+             patch("tools.mastering.master_tracks.load_genre_presets", return_value={}), \
+             patch("tools.mastering.master_tracks.master_track", side_effect=mock_master), \
+             patch("tools.mastering.analyze_tracks.analyze_track",
+                   side_effect=lambda f: self._mock_analyze(Path(f).name)), \
+             patch("tools.mastering.qc_tracks.qc_track",
+                   side_effect=lambda f, c=None: self._mock_qc_result(Path(f).name)):
+            result = json.loads(_run(server.master_album("test-album")))
+
+        assert result["failed_stage"] == "mastering"
+
+        staging_dir = audio_dir / ".mastering_staging"
+        assert not staging_dir.exists(), ".mastering_staging was not cleaned up on silent-track failure"
