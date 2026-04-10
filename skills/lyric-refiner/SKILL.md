@@ -40,7 +40,7 @@ allowed-tools:
 - **Track status `Not Started` or `Sources Pending`**: "Track isn't ready for refinement — lyrics must be written first."
 - **All tracks instrumental**: "No vocal tracks to refine."
 
-### Workflow
+## Workflow
 
 Run all passes autonomously. No human checkpoints between passes.
 

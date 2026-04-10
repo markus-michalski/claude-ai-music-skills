@@ -6,8 +6,17 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+## [0.89.0] - 2026-04-10
+
 ### Added
+- **Lyric-refiner skill** — multi-pass lyric refinement for post-writing polish
 - **Tango genre** — Argentine-Uruguayan dance and song tradition covering Golden Age orquestas, tango canción, nuevo tango (Piazzolla), and electrotango; includes mastering presets for bandoneón-centric dynamics
+
+### Fixed
+- Updated Opus 4.5 references to Opus 4.6 in model-strategy.md
+- Updated Sonnet 4.5 references to Sonnet 4.6 in model-strategy.md
+- Fixed README skill count (51 → 52)
+- Fixed lyric-refiner skill missing required section heading
 
 ## [0.88.0] - 2026-04-08
 
