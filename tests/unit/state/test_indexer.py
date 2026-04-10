@@ -682,7 +682,7 @@ class TestReadWriteState:
         state_file.write_text("{invalid json content, not valid")
 
         result = read_state()
-        assert result is None
+        assert result == {}
 
     def test_read_truncated_json(self, tmp_path, monkeypatch):
         _override_indexer_paths(monkeypatch, tmp_path)
@@ -691,7 +691,7 @@ class TestReadWriteState:
         state_file.write_text('{"version": "1.0.0", "albums": {')
 
         result = read_state()
-        assert result is None
+        assert result == {}
 
     def test_read_empty_file(self, tmp_path, monkeypatch):
         _override_indexer_paths(monkeypatch, tmp_path)
@@ -700,7 +700,7 @@ class TestReadWriteState:
         state_file.write_text("")
 
         result = read_state()
-        assert result is None
+        assert result == {}
 
     def test_write_creates_cache_dir(self, tmp_path, monkeypatch):
         new_cache = tmp_path / "new_cache_dir"

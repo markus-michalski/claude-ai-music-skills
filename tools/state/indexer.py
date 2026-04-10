@@ -697,7 +697,7 @@ def read_state() -> dict[str, Any] | None:
     """Read state from cache file.
 
     Returns:
-        Parsed state dict, or None if missing/corrupted.
+        Parsed state dict, empty dict if corrupted (after backup), or None if missing.
     """
     if not STATE_FILE.exists():
         return None
@@ -705,8 +705,20 @@ def read_state() -> dict[str, Any] | None:
         with open(STATE_FILE) as f:
             return cast(dict[str, Any], json.load(f))
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Corrupted state file: %s", e)
-        return None
+        # Corrupted — backup the file and return empty state
+        logger.error(
+            "Corrupted state file: %s — backing up and returning empty state", e
+        )
+        try:
+            import shutil
+
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+            backup_path = CACHE_DIR / f"state.{timestamp}.corrupt"
+            shutil.copy2(STATE_FILE, backup_path)
+            logger.error("Corrupted state backed up to %s", backup_path)
+        except OSError as backup_err:
+            logger.error("Could not backup corrupted state: %s", backup_err)
+        return {}
 
 
 def migrate_state(state: dict[str, Any]) -> dict[str, Any] | None:
