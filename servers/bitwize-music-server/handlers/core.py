@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from handlers import _shared
+from handlers._atomic import atomic_write_text
 from handlers._shared import (
     _CODE_BLOCK_SECTIONS,
     _MARKDOWN_LINK_RE,
@@ -1023,7 +1024,7 @@ async def update_track_field(
 
     # Write back
     try:
-        path.write_text(updated_text, encoding="utf-8")
+        atomic_write_text(path, updated_text)
     except OSError as e:
         return _safe_json({"error": f"Cannot write track file: {e}"})
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from handlers import _shared
+from handlers._atomic import atomic_write_text
 from handlers._shared import (
     _derive_title_from_slug,
     _find_album_or_error,
@@ -254,7 +255,7 @@ async def rename_track(
             h1_match = heading_pattern.search(updated_text)
             if h1_match:
                 updated_text = updated_text[:h1_match.start()] + f"# {title}" + updated_text[h1_match.end():]
-            new_path.write_text(updated_text, encoding="utf-8")
+            atomic_write_text(new_path, updated_text)
         else:
             logger.warning("Title field not found in track metadata table for %s", matched_slug)
     except OSError as e:

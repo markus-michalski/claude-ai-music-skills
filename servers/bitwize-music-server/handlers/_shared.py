@@ -11,6 +11,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from handlers._atomic import atomic_write_text
+
 # ---------------------------------------------------------------------------
 # Shared state — set by server.py at startup
 # ---------------------------------------------------------------------------
@@ -159,7 +161,7 @@ def _update_frontmatter_block(
     new_text = "---\n" + new_fm_text + "\n---\n" + rest_of_file
 
     try:
-        file_path.write_text(new_text, encoding="utf-8")
+        atomic_write_text(file_path, new_text)
     except OSError as exc:
         return False, f"Cannot write {file_path}: {exc}"
 
