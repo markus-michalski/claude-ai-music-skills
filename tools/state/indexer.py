@@ -37,8 +37,6 @@ from typing import Any, cast
 
 # Lock timeout in seconds (prevents indefinite blocking)
 LOCK_TIMEOUT_SECONDS = 10
-# Stale lock threshold in seconds (locks older than this are considered abandoned)
-STALE_LOCK_SECONDS = 60
 
 # Ensure project root is on sys.path so this file works both as:
 #   python3 tools/state/indexer.py rebuild
@@ -613,8 +611,12 @@ def _update_tracks_incremental(album: dict[str, Any], album_dir: Path) -> None:
     )
 
 
-def _acquire_lock_with_timeout(lock_fd: Any, timeout: int = LOCK_TIMEOUT_SECONDS) -> None:
-    """Acquire an exclusive file lock with timeout and stale lock recovery.
+def _acquire_lock_with_timeout(lock_fd: Any, timeout: int | float = LOCK_TIMEOUT_SECONDS) -> None:
+    """Acquire an exclusive file lock with exponential backoff.
+
+    Uses only ``fcntl.flock`` for locking — no mtime-based stale detection,
+    which had a TOCTOU race.  ``flock`` locks auto-release when the holding
+    process dies, so stale locks self-heal.
 
     Args:
         lock_fd: Open file descriptor for the lock file.
@@ -624,6 +626,7 @@ def _acquire_lock_with_timeout(lock_fd: Any, timeout: int = LOCK_TIMEOUT_SECONDS
         TimeoutError: If lock cannot be acquired within timeout.
     """
     deadline = time.monotonic() + timeout
+    wait = 0.05  # Initial backoff
 
     while True:
         try:
@@ -633,30 +636,14 @@ def _acquire_lock_with_timeout(lock_fd: Any, timeout: int = LOCK_TIMEOUT_SECONDS
             if e.errno not in (errno.EACCES, errno.EAGAIN):
                 raise  # Unexpected error
 
-        # Check for stale lock
-        try:
-            lock_age = time.time() - LOCK_FILE.stat().st_mtime
-            if lock_age > STALE_LOCK_SECONDS:
-                logger.warning(
-                    "Stale lock detected (%.0fs old), recovering", lock_age
-                )
-                # Touch the lock file to reset mtime, then retry
-                LOCK_FILE.touch()
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    return
-                except OSError:
-                    pass  # Still held, continue waiting
-        except OSError:
-            pass  # Lock file may have been removed
-
         if time.monotonic() >= deadline:
             raise TimeoutError(
                 f"Could not acquire state lock within {timeout}s. "
                 f"Lock file: {LOCK_FILE}"
             )
 
-        time.sleep(0.1)
+        time.sleep(min(wait, deadline - time.monotonic()))
+        wait = min(wait * 2, 1.0)  # Cap at 1 second
 
 
 def write_state(state: dict[str, Any]) -> None:
