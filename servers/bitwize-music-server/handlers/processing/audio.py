@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -767,7 +768,15 @@ async def master_album(
         eq_settings.append((8000.0, effective_highs, 0.7))
 
     output_dir = audio_dir / "mastered"
-    output_dir.mkdir(exist_ok=True)
+
+    # Use a staging directory so that a mid-batch crash never leaves
+    # partial results in mastered/.  Files move atomically after all
+    # tracks succeed; staging is cleaned up on any failure path.
+    staging_dir = audio_dir / ".mastering_staging"
+    if staging_dir.exists():
+        import shutil as _shutil
+        _shutil.rmtree(staging_dir)
+    staging_dir.mkdir()
 
     # Look up per-track metadata for fade_out values
     state = _shared.cache.get_state() or {}
@@ -775,36 +784,45 @@ async def master_album(
                          .get(_normalize_slug(album_slug), {})
                          .get("tracks", {}))
 
-    master_results = []
-    for wav_file in wav_files:
-        output_path = output_dir / wav_file.name
+    try:
+        master_results = []
+        for wav_file in wav_files:
+            output_path = staging_dir / wav_file.name
 
-        # Derive track slug from WAV filename and look up fade_out
-        track_stem = wav_file.stem
-        track_slug = _normalize_slug(track_stem)
-        track_meta = album_tracks.get(track_slug, {})
-        fade_out_val = track_meta.get("fade_out")
+            # Derive track slug from WAV filename and look up fade_out
+            track_stem = wav_file.stem
+            track_slug = _normalize_slug(track_stem)
+            track_meta = album_tracks.get(track_slug, {})
+            fade_out_val = track_meta.get("fade_out")
 
-        def _do_master(in_path: Path, out_path: Path, lufs: float, eq: list[tuple[float, float, float]], ceil: float, fade: float | None, comp: float) -> dict[str, Any]:
-            return _master_track(
-                str(in_path), str(out_path),
-                target_lufs=lufs,
-                eq_settings=eq if eq else None,
-                ceiling_db=ceil,
-                fade_out=fade,
-                compress_ratio=comp,
+            def _do_master(in_path: Path, out_path: Path, lufs: float, eq: list[tuple[float, float, float]], ceil: float, fade: float | None, comp: float) -> dict[str, Any]:
+                return _master_track(
+                    str(in_path), str(out_path),
+                    target_lufs=lufs,
+                    eq_settings=eq if eq else None,
+                    ceiling_db=ceil,
+                    fade_out=fade,
+                    compress_ratio=comp,
+                )
+
+            result = await loop.run_in_executor(
+                None, _do_master, wav_file, output_path,
+                effective_lufs, eq_settings, ceiling_db, fade_out_val,
+                effective_compress,
             )
-
-        result = await loop.run_in_executor(
-            None, _do_master, wav_file, output_path,
-            effective_lufs, eq_settings, ceiling_db, fade_out_val,
-            effective_compress,
-        )
-        if result and not result.get("skipped"):
-            result["filename"] = wav_file.name
-            master_results.append(result)
+            if result and not result.get("skipped"):
+                result["filename"] = wav_file.name
+                master_results.append(result)
+    except Exception:
+        if staging_dir.exists():
+            import shutil as _shutil
+            _shutil.rmtree(staging_dir)
+        raise
 
     if not master_results:
+        if staging_dir.exists():
+            import shutil as _shutil
+            _shutil.rmtree(staging_dir)
         stages["mastering"] = {"status": "fail", "detail": "No tracks processed (all silent)"}
         return _safe_json({
             "album_slug": album_slug,
@@ -815,6 +833,12 @@ async def master_album(
             "failed_stage": "mastering",
             "failure_detail": {"reason": "No tracks processed (all silent or no WAV files)"},
         })
+
+    # All tracks mastered successfully — move staging files to final output_dir
+    output_dir.mkdir(exist_ok=True)
+    for staged_file in staging_dir.iterdir():
+        os.replace(str(staged_file), str(output_dir / staged_file.name))
+    staging_dir.rmdir()
 
     stages["mastering"] = {
         "status": "pass",

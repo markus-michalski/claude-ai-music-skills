@@ -2335,16 +2335,13 @@ class TestUpdateTrackField:
     def test_update_read_only_file(self, tmp_path):
         """Read-only track file returns write error."""
         mock_cache, track_file = self._make_cache_with_file(tmp_path)
-        track_file.chmod(0o444)
-        try:
-            with patch.object(_shared_mod, "cache", mock_cache):
-                result = json.loads(_run(server.update_track_field(
-                    "test-album", "01-test-track", "status", "Generated", force=True
-                )))
-            assert "error" in result
-            assert "Cannot write" in result["error"]
-        finally:
-            track_file.chmod(0o644)
+        with patch.object(_shared_mod, "cache", mock_cache), \
+             patch.object(_core_mod, "atomic_write_text", side_effect=OSError("Permission denied")):
+            result = json.loads(_run(server.update_track_field(
+                "test-album", "01-test-track", "status", "Generated", force=True
+            )))
+        assert "error" in result
+        assert "Cannot write" in result["error"]
 
     def test_rapid_sequential_updates(self, tmp_path):
         """Multiple updates to same track don't corrupt file."""
@@ -6054,7 +6051,7 @@ class TestUpdateAlbumStatus:
         mock_cache = MockStateCache(state)
 
         with patch.object(_shared_mod, "cache", mock_cache), \
-             patch.object(Path, "write_text", side_effect=OSError("disk full")):
+             patch.object(_status_mod, "atomic_write_text", side_effect=OSError("disk full")):
             result = json.loads(_run(server.update_album_status("test-album", "Complete")))
         assert "error" in result
         assert "Cannot write" in result["error"]
