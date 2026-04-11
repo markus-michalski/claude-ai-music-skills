@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from tools.mastering.master_tracks import (
     GENRE_PRESETS,
     _BUILTIN_PRESETS_FILE,
+    _PRESET_DEFAULTS,
     _load_yaml_file,
     _process_one_track,
     apply_eq,
@@ -451,6 +452,34 @@ class TestMasterTrack:
         assert len(data) > 0
         assert np.all(np.isfinite(data))
 
+    def test_mastering_with_preset_dict(self, noise_wav, output_path):
+        """master_track should accept a preset dict for all parameters."""
+        preset = {
+            'target_lufs': -16.0,
+            'cut_highmid': -2.0,
+            'cut_highs': -1.0,
+            'compress_ratio': 2.0,
+            'compress_threshold': -15.0,
+            'compress_attack': 20.0,
+            'compress_release': 150.0,
+            'eq_highmid_freq': 4000.0,
+            'eq_highmid_q': 2.0,
+            'eq_highs_freq': 9000.0,
+            'eq_highs_q': 0.5,
+            'dither_bits': 16,
+        }
+        result = master_track(noise_wav, output_path, preset=preset)
+        assert not result.get('skipped', False)
+        assert Path(output_path).exists()
+        assert abs(result['final_lufs'] - (-16.0)) < 2.0
+
+    def test_preset_dict_overrides_defaults(self, noise_wav, output_path):
+        """Partial preset dict should merge with defaults."""
+        preset = {'target_lufs': -18.0}
+        result = master_track(noise_wav, output_path, preset=preset)
+        assert not result.get('skipped', False)
+        assert abs(result['final_lufs'] - (-18.0)) < 2.0
+
 
 # ─── Tests: Genre Presets ──────────────────────────────────────────────
 
@@ -458,19 +487,23 @@ class TestMasterTrack:
 class TestGenrePresets:
     """Tests for genre preset configuration."""
 
-    def test_all_presets_are_4_tuples(self):
+    def test_all_presets_are_dicts(self):
         for genre, preset in GENRE_PRESETS.items():
-            assert len(preset) == 4, f"Genre '{genre}' preset should be a 4-tuple"
+            assert isinstance(preset, dict), f"Genre '{genre}' preset should be a dict"
+            assert 'target_lufs' in preset, f"Genre '{genre}' missing target_lufs"
+            assert 'cut_highmid' in preset, f"Genre '{genre}' missing cut_highmid"
+            assert 'cut_highs' in preset, f"Genre '{genre}' missing cut_highs"
+            assert 'compress_ratio' in preset, f"Genre '{genre}' missing compress_ratio"
 
     def test_all_presets_have_negative_lufs(self):
-        for genre, (lufs, _, _, _) in GENRE_PRESETS.items():
-            assert lufs < 0, f"Genre '{genre}' LUFS should be negative"
+        for genre, preset in GENRE_PRESETS.items():
+            assert preset['target_lufs'] < 0, f"Genre '{genre}' LUFS should be negative"
 
     def test_all_presets_have_nonpositive_eq(self):
         """EQ values should be cuts (negative) or zero."""
-        for genre, (_, highmid, highs, _) in GENRE_PRESETS.items():
-            assert highmid <= 0, f"Genre '{genre}' high-mid should be <= 0"
-            assert highs <= 0, f"Genre '{genre}' highs should be <= 0"
+        for genre, preset in GENRE_PRESETS.items():
+            assert preset['cut_highmid'] <= 0, f"Genre '{genre}' high-mid should be <= 0"
+            assert preset['cut_highs'] <= 0, f"Genre '{genre}' highs should be <= 0"
 
     def test_common_genres_exist(self):
         for genre in ['pop', 'rock', 'hip-hop', 'electronic', 'jazz', 'classical', 'folk', 'country', 'metal']:
@@ -478,13 +511,13 @@ class TestGenrePresets:
 
     def test_preset_with_mastering(self, noise_wav, output_path):
         """Apply a genre preset through the full mastering chain."""
-        lufs, highmid, highs, _compress = GENRE_PRESETS['rock']
+        preset = GENRE_PRESETS['rock']
         eq = []
-        if highmid != 0:
-            eq.append((3500, highmid, 1.5))
-        if highs != 0:
-            eq.append((8000, highs, 0.7))
-        result = master_track(noise_wav, output_path, target_lufs=lufs, eq_settings=eq)
+        if preset['cut_highmid'] != 0:
+            eq.append((preset['eq_highmid_freq'], preset['cut_highmid'], preset['eq_highmid_q']))
+        if preset['cut_highs'] != 0:
+            eq.append((preset['eq_highs_freq'], preset['cut_highs'], preset['eq_highs_q']))
+        result = master_track(noise_wav, output_path, target_lufs=preset['target_lufs'], eq_settings=eq)
         assert not result.get('skipped', False)
 
 
@@ -568,21 +601,33 @@ class TestYamlPresetLoading:
             assert 'cut_highmid' in settings, f"Genre '{genre}' missing cut_highmid"
             assert 'cut_highs' in settings, f"Genre '{genre}' missing cut_highs"
 
+    def test_builtin_yaml_has_all_default_keys(self):
+        """Built-in YAML defaults should include all preset keys."""
+        data = _load_yaml_file(_BUILTIN_PRESETS_FILE)
+        defaults = data['defaults']
+        expected_keys = [
+            'target_lufs', 'cut_highmid', 'cut_highs', 'compress_ratio',
+            'compress_threshold', 'compress_attack', 'compress_release',
+            'eq_highmid_freq', 'eq_highmid_q', 'eq_highs_freq', 'eq_highs_q',
+            'dither_bits',
+        ]
+        for key in expected_keys:
+            assert key in defaults, f"Default key '{key}' missing from genre-presets.yaml"
+
     def test_loaded_presets_match_yaml(self):
         """GENRE_PRESETS dict should match what's in the YAML file."""
         data = _load_yaml_file(_BUILTIN_PRESETS_FILE)
-        defaults = data.get('defaults', {})
-        default_compress = float(defaults.get('compress_ratio', 1.5))
         for genre, settings in data['genres'].items():
             assert genre in GENRE_PRESETS, f"Genre '{genre}' in YAML but not in GENRE_PRESETS"
-            expected = (
-                float(settings['target_lufs']),
-                float(settings['cut_highmid']),
-                float(settings['cut_highs']),
-                float(settings.get('compress_ratio', default_compress)),
+            preset = GENRE_PRESETS[genre]
+            assert preset['target_lufs'] == float(settings['target_lufs']), (
+                f"Genre '{genre}' target_lufs mismatch"
             )
-            assert GENRE_PRESETS[genre] == expected, (
-                f"Genre '{genre}': YAML={expected}, loaded={GENRE_PRESETS[genre]}"
+            assert preset['cut_highmid'] == float(settings['cut_highmid']), (
+                f"Genre '{genre}' cut_highmid mismatch"
+            )
+            assert preset['cut_highs'] == float(settings['cut_highs']), (
+                f"Genre '{genre}' cut_highs mismatch"
             )
 
     def test_load_yaml_file_missing(self, tmp_path):
@@ -622,11 +667,11 @@ class TestYamlPresetLoading:
 
         presets = load_genre_presets()
         # Rock should have overridden cut_highmid but keep other fields
-        lufs, highmid, highs, compress = presets['rock']
-        assert highmid == -1.0  # Overridden
-        assert lufs == -14.0    # Inherited from built-in
-        assert highs == 0       # Inherited from built-in
-        assert compress == 1.5  # Default compress_ratio
+        preset = presets['rock']
+        assert preset['cut_highmid'] == -1.0  # Overridden
+        assert preset['target_lufs'] == -14.0  # Inherited from built-in
+        assert preset['cut_highs'] == 0        # Inherited from built-in
+        assert preset['compress_ratio'] == 1.5  # Default
 
     def test_override_adds_new_genre(self, tmp_path, monkeypatch):
         """User override can add entirely new genres."""
@@ -646,7 +691,11 @@ class TestYamlPresetLoading:
 
         presets = load_genre_presets()
         assert 'dark-electronic' in presets
-        assert presets['dark-electronic'] == (-12.0, -3.0, -1.0, 1.5)
+        preset = presets['dark-electronic']
+        assert preset['target_lufs'] == -12.0
+        assert preset['cut_highmid'] == -3.0
+        assert preset['cut_highs'] == -1.0
+        assert preset['compress_ratio'] == 1.5
 
     def test_override_defaults(self, tmp_path, monkeypatch):
         """User can override default settings."""
@@ -665,10 +714,10 @@ class TestYamlPresetLoading:
         monkeypatch.setattr(mt, '_get_overrides_path', lambda: override_dir)
 
         presets = load_genre_presets()
-        lufs, highmid, highs, compress = presets['custom-genre']
-        assert lufs == -12.0    # From overridden defaults
-        assert highmid == -2.0  # From genre entry
-        assert compress == 1.5  # Default compress_ratio
+        preset = presets['custom-genre']
+        assert preset['target_lufs'] == -12.0    # From overridden defaults
+        assert preset['cut_highmid'] == -2.0     # From genre entry
+        assert preset['compress_ratio'] == 1.5   # Default
 
     def test_no_override_dir_works(self, monkeypatch):
         """When no override directory exists, built-in presets load fine."""
@@ -774,3 +823,45 @@ class TestProcessOneTrack:
             ceiling_db=-1.0, dry_run=True,
         )
         assert result is None
+
+    def test_preset_dict_passthrough(self, sine_wav, output_path):
+        """_process_one_track should accept and pass through a preset dict."""
+        preset = {'target_lufs': -16.0, 'compress_ratio': 1.0}
+        name, result = _process_one_track(
+            Path(sine_wav), Path(output_path),
+            preset=preset, ceiling_db=-1.0, dry_run=False,
+        )
+        assert result is not None
+        assert Path(output_path).exists()
+
+
+# ─── Tests: Preset Resolution ───────────────────────────────────────────
+
+
+class TestPresetResolution:
+    """Tests for preset dict construction from genre presets and CLI overrides."""
+
+    def test_genre_preset_is_complete_dict(self):
+        """Each genre preset should have all keys from _PRESET_DEFAULTS."""
+        for genre, preset in GENRE_PRESETS.items():
+            for key in _PRESET_DEFAULTS:
+                assert key in preset, f"Genre '{genre}' missing key '{key}'"
+
+    def test_genre_preset_values_are_floats(self):
+        """All preset values should be floats."""
+        for genre, preset in GENRE_PRESETS.items():
+            for key, value in preset.items():
+                assert isinstance(value, float), (
+                    f"Genre '{genre}' key '{key}' is {type(value).__name__}, expected float"
+                )
+
+    def test_default_preset_matches_hardcoded_defaults(self):
+        """_PRESET_DEFAULTS should match the previously hardcoded values."""
+        assert _PRESET_DEFAULTS['compress_threshold'] == -18.0
+        assert _PRESET_DEFAULTS['compress_attack'] == 30.0
+        assert _PRESET_DEFAULTS['compress_release'] == 200.0
+        assert _PRESET_DEFAULTS['eq_highmid_freq'] == 3500.0
+        assert _PRESET_DEFAULTS['eq_highmid_q'] == 1.5
+        assert _PRESET_DEFAULTS['eq_highs_freq'] == 8000.0
+        assert _PRESET_DEFAULTS['eq_highs_q'] == 0.7
+        assert _PRESET_DEFAULTS['dither_bits'] == 16

@@ -73,16 +73,39 @@ def _get_overrides_path() -> Path | None:
     return None
 
 
-def load_genre_presets() -> dict[str, tuple[float, float, float, float]]:
+# All recognized preset keys and their defaults
+_PRESET_DEFAULTS: dict[str, float] = {
+    'target_lufs': -14.0,
+    'cut_highmid': 0.0,
+    'cut_highs': 0.0,
+    'compress_ratio': 1.5,
+    'compress_threshold': -18.0,
+    'compress_attack': 30.0,
+    'compress_release': 200.0,
+    'eq_highmid_freq': 3500.0,
+    'eq_highmid_q': 1.5,
+    'eq_highs_freq': 8000.0,
+    'eq_highs_q': 0.7,
+    'dither_bits': 16,
+}
+
+
+def load_genre_presets() -> dict[str, dict[str, float]]:
     """Load genre presets from YAML, merging built-in with user overrides.
 
     Returns:
-        Dict mapping genre name to (target_lufs, cut_highmid, cut_highs, compress_ratio) tuples.
+        Dict mapping genre name to a dict of preset parameters.
     """
     # Load built-in presets
     builtin = _load_yaml_file(_BUILTIN_PRESETS_FILE)
     builtin_genres = builtin.get('genres', {})
-    defaults = builtin.get('defaults', {})
+    defaults = {**_PRESET_DEFAULTS}
+
+    # Merge YAML defaults on top of hardcoded defaults
+    yaml_defaults = builtin.get('defaults', {})
+    for key in defaults:
+        if key in yaml_defaults:
+            defaults[key] = float(yaml_defaults[key])
 
     # Load user overrides
     overrides_dir = _get_overrides_path()
@@ -93,26 +116,21 @@ def load_genre_presets() -> dict[str, tuple[float, float, float, float]]:
         override_genres = override_data.get('genres', {})
         override_defaults = override_data.get('defaults', {})
         if override_defaults:
-            defaults.update(override_defaults)
-
-    default_lufs = float(defaults.get('target_lufs', -14.0))
-    default_highmid = float(defaults.get('cut_highmid', 0))
-    default_highs = float(defaults.get('cut_highs', 0))
-    default_compress_ratio = float(defaults.get('compress_ratio', 1.5))
+            for key in defaults:
+                if key in override_defaults:
+                    defaults[key] = float(override_defaults[key])
 
     # Merge: built-in genres + override genres (override wins per-field)
     all_genre_names = set(builtin_genres.keys()) | set(override_genres.keys())
-    presets = {}
+    presets: dict[str, dict[str, float]] = {}
     for genre in all_genre_names:
         base = builtin_genres.get(genre, {})
         over = override_genres.get(genre, {})
         merged = {**base, **over}
-        presets[genre] = (
-            float(merged.get('target_lufs', default_lufs)),
-            float(merged.get('cut_highmid', default_highmid)),
-            float(merged.get('cut_highs', default_highs)),
-            float(merged.get('compress_ratio', default_compress_ratio)),
-        )
+        presets[genre] = {
+            key: float(merged.get(key, default))
+            for key, default in defaults.items()
+        }
 
     return presets
 
@@ -345,19 +363,36 @@ def master_track(input_path: Path | str, output_path: Path | str,
                  target_lufs: float = -14.0,
                  eq_settings: list[tuple[float, float, float]] | None = None,
                  ceiling_db: float = -1.0, fade_out: float | None = None,
-                 compress_ratio: float = 1.5) -> dict[str, Any]:
+                 compress_ratio: float = 1.5,
+                 preset: dict[str, float] | None = None) -> dict[str, Any]:
     """Master a single track.
 
     Args:
         input_path: Path to input wav file
         output_path: Path for output wav file
-        target_lufs: Target integrated loudness
-        eq_settings: List of (freq, gain_db, q) tuples for EQ
+        target_lufs: Target integrated loudness (ignored if preset provided)
+        eq_settings: List of (freq, gain_db, q) tuples for EQ (ignored if preset provided)
         ceiling_db: True peak ceiling in dB
         fade_out: Optional fade-out duration in seconds.
             None or <= 0 disables fade-out.
-        compress_ratio: Compression ratio (1.0 = bypass, 1.5 = gentle glue)
+        compress_ratio: Compression ratio (ignored if preset provided)
+        preset: Full preset dict. When provided, target_lufs, eq_settings,
+            and compress_ratio are read from the preset instead.
     """
+    # Resolve parameters from preset or legacy args
+    p = {**_PRESET_DEFAULTS}
+    if preset is not None:
+        p.update(preset)
+        target_lufs = p['target_lufs']
+        compress_ratio = p['compress_ratio']
+        # Build EQ settings from preset
+        eq_settings = []
+        if p['cut_highmid'] != 0:
+            eq_settings.append((p['eq_highmid_freq'], p['cut_highmid'], p['eq_highmid_q']))
+        if p['cut_highs'] != 0:
+            eq_settings.append((p['eq_highs_freq'], p['cut_highs'], p['eq_highs_q']))
+        eq_settings = eq_settings or None
+
     # Read audio
     data, rate = sf.read(input_path)
 
@@ -380,10 +415,11 @@ def master_track(input_path: Path | str, output_path: Path | str,
     if compress_ratio > 1.0:
         data = gentle_compress(
             data, rate,
-            threshold_db=-18.0, ratio=compress_ratio,
-            attack_ms=30.0, release_ms=200.0,
+            threshold_db=p['compress_threshold'],
+            ratio=compress_ratio,
+            attack_ms=p['compress_attack'],
+            release_ms=p['compress_release'],
         )
-
 
     # Measure current loudness
     meter = pyln.Meter(rate)
@@ -420,10 +456,12 @@ def master_track(input_path: Path | str, output_path: Path | str,
         data = data[:, 0]
 
     # Apply TPDF dither as the final step before quantization
-    data = apply_tpdf_dither(data, target_bits=16)
+    dither_bits = int(p['dither_bits'])
+    data = apply_tpdf_dither(data, target_bits=dither_bits)
 
     # Write output (same format as input)
-    sf.write(output_path, data, rate, subtype='PCM_16')
+    subtype = 'PCM_16' if dither_bits <= 16 else 'PCM_24'
+    sf.write(output_path, data, rate, subtype=subtype)
 
     return {
         'original_lufs': current_lufs,
@@ -433,10 +471,12 @@ def master_track(input_path: Path | str, output_path: Path | str,
     }
 
 def _process_one_track(wav_file: Path | str, output_path: Path | str,
-                       target_lufs: float,
-                       eq_settings: list[tuple[float, float, float]] | None,
-                       ceiling_db: float, dry_run: bool,
-                       compress_ratio: float = 1.5) -> tuple[str, dict[str, Any] | None]:
+                       target_lufs: float = -14.0,
+                       eq_settings: list[tuple[float, float, float]] | None = None,
+                       ceiling_db: float = -1.0, dry_run: bool = False,
+                       compress_ratio: float = 1.5,
+                       preset: dict[str, float] | None = None,
+                       ) -> tuple[str, dict[str, Any] | None]:
     """Process a single track (used by both sequential and parallel paths).
 
     Returns (wav_file_name, result_dict) or (wav_file_name, None) if skipped.
@@ -446,13 +486,16 @@ def _process_one_track(wav_file: Path | str, output_path: Path | str,
         if len(data.shape) == 1:
             data = np.column_stack([data, data])
         meter = pyln.Meter(rate)
+        effective_lufs = target_lufs
+        if preset is not None:
+            effective_lufs = preset.get('target_lufs', target_lufs)
         current_lufs = meter.integrated_loudness(data)
         if not np.isfinite(current_lufs):
             return (str(wav_file), None)
-        gain = target_lufs - current_lufs
+        gain = effective_lufs - current_lufs
         result = {
             'original_lufs': current_lufs,
-            'final_lufs': target_lufs,
+            'final_lufs': effective_lufs,
             'gain_applied': gain,
             'final_peak': -1.0,
         }
@@ -464,6 +507,7 @@ def _process_one_track(wav_file: Path | str, output_path: Path | str,
             eq_settings=eq_settings,
             ceiling_db=ceiling_db,
             compress_ratio=compress_ratio,
+            preset=preset,
         )
 
     if result.get('skipped'):
@@ -494,9 +538,9 @@ Examples:
     parser.add_argument('--ceiling', type=float, default=-1.0,
                        help='True peak ceiling in dB (default: -1.0)')
     parser.add_argument('--cut-highmid', type=float, default=None,
-                       help='High-mid cut in dB at 3.5kHz (e.g., -2 for 2dB cut)')
+                       help='High-mid cut in dB at eq_highmid_freq (e.g., -2 for 2dB cut)')
     parser.add_argument('--cut-highs', type=float, default=None,
-                       help='High shelf cut in dB at 8kHz')
+                       help='High shelf cut in dB at eq_highs_freq')
     parser.add_argument('--output-dir', type=str, default='mastered',
                        help='Output directory (default: mastered)')
     parser.add_argument('--dry-run', action='store_true',
@@ -507,6 +551,22 @@ Examples:
                        help='Show only warnings and errors')
     parser.add_argument('--compress-ratio', type=float, default=None,
                        help='Mastering compression ratio (1.0=bypass, default: genre preset or 1.5)')
+    parser.add_argument('--compress-threshold', type=float, default=None,
+                       help='Compression threshold in dB (default: -18.0)')
+    parser.add_argument('--compress-attack', type=float, default=None,
+                       help='Compression attack in ms (default: 30.0)')
+    parser.add_argument('--compress-release', type=float, default=None,
+                       help='Compression release in ms (default: 200.0)')
+    parser.add_argument('--eq-highmid-freq', type=float, default=None,
+                       help='High-mid EQ center frequency in Hz (default: 3500.0)')
+    parser.add_argument('--eq-highmid-q', type=float, default=None,
+                       help='High-mid EQ Q factor (default: 1.5)')
+    parser.add_argument('--eq-highs-freq', type=float, default=None,
+                       help='High shelf frequency in Hz (default: 8000.0)')
+    parser.add_argument('--eq-highs-q', type=float, default=None,
+                       help='High shelf Q factor (default: 0.7)')
+    parser.add_argument('--dither-bits', type=int, default=None,
+                       help='Output bit depth for TPDF dither (default: 16)')
     parser.add_argument('-j', '--jobs', type=int, default=1,
                        help='Parallel jobs (0=auto, default: 1)')
 
@@ -514,33 +574,35 @@ Examples:
 
     setup_logging(__name__, verbose=args.verbose, quiet=args.quiet)
 
-    # Apply genre preset if specified
+    # Build preset dict: start with defaults, layer genre preset, then CLI overrides
+    preset = {**_PRESET_DEFAULTS}
+
     if args.genre:
         genre_key = args.genre.lower()
         if genre_key not in GENRE_PRESETS:
             logger.error("Unknown genre: %s", args.genre)
             logger.error("Available: %s", ', '.join(sorted(GENRE_PRESETS.keys())))
             return
-        preset_lufs, preset_highmid, preset_highs, preset_compress = GENRE_PRESETS[genre_key]
-        # Genre preset provides defaults, but explicit args override
-        if args.target_lufs is None:
-            args.target_lufs = preset_lufs
-        if args.cut_highmid is None:
-            args.cut_highmid = preset_highmid
-        if args.cut_highs is None:
-            args.cut_highs = preset_highs
-        if args.compress_ratio is None:
-            args.compress_ratio = preset_compress
+        preset.update(GENRE_PRESETS[genre_key])
 
-    # Apply defaults if no genre and no explicit value
-    if args.target_lufs is None:
-        args.target_lufs = -14.0
-    if args.cut_highmid is None:
-        args.cut_highmid = 0
-    if args.cut_highs is None:
-        args.cut_highs = 0
-    if args.compress_ratio is None:
-        args.compress_ratio = 1.5
+    # CLI overrides (only apply if explicitly set)
+    cli_overrides = {
+        'target_lufs': args.target_lufs,
+        'cut_highmid': args.cut_highmid,
+        'cut_highs': args.cut_highs,
+        'compress_ratio': args.compress_ratio,
+        'compress_threshold': args.compress_threshold,
+        'compress_attack': args.compress_attack,
+        'compress_release': args.compress_release,
+        'eq_highmid_freq': args.eq_highmid_freq,
+        'eq_highmid_q': args.eq_highmid_q,
+        'eq_highs_freq': args.eq_highs_freq,
+        'eq_highs_q': args.eq_highs_q,
+        'dither_bits': float(args.dither_bits) if args.dither_bits is not None else None,
+    }
+    for key, value in cli_overrides.items():
+        if value is not None:
+            preset[key] = float(value)
 
     # Setup
     input_dir = Path(args.path).expanduser().resolve()
@@ -570,29 +632,23 @@ Examples:
                        if f.suffix.lower() == '.wav'
                        and 'venv' not in str(f)])
 
-    # Build EQ settings
-    eq_settings: list[tuple[float, float, float]] = []
-    if args.cut_highmid != 0:
-        eq_settings.append((3500.0, args.cut_highmid, 1.5))  # 3.5kHz with moderate Q
-    if args.cut_highs != 0:
-        # For high shelf, we'd need different handling - simplified here
-        eq_settings.append((8000.0, args.cut_highs, 0.7))
-
     print("=" * 70)
     print("MASTERING SESSION")
     print("=" * 70)
     if args.genre:
         print(f"Genre preset: {args.genre}")
-    print(f"Target LUFS: {args.target_lufs}")
+    print(f"Target LUFS: {preset['target_lufs']}")
     print(f"Peak ceiling: {args.ceiling} dBTP")
-    if args.cut_highmid != 0:
-        print(f"EQ: High-mid cut: {args.cut_highmid}dB at 3.5kHz")
-    if args.cut_highs != 0:
-        print(f"EQ: High shelf cut: {args.cut_highs}dB at 8kHz")
-    if args.compress_ratio > 1.0:
-        print(f"Compression: {args.compress_ratio}:1")
+    if preset['cut_highmid'] != 0:
+        print(f"EQ: High-mid cut: {preset['cut_highmid']}dB at {preset['eq_highmid_freq']}Hz (Q={preset['eq_highmid_q']})")
+    if preset['cut_highs'] != 0:
+        print(f"EQ: High shelf cut: {preset['cut_highs']}dB at {preset['eq_highs_freq']}Hz (Q={preset['eq_highs_q']})")
+    if preset['compress_ratio'] > 1.0:
+        print(f"Compression: {preset['compress_ratio']}:1 (threshold={preset['compress_threshold']}dB, attack={preset['compress_attack']}ms, release={preset['compress_release']}ms)")
     else:
         print("Compression: bypass")
+    if int(preset['dither_bits']) != 16:
+        print(f"Dither: {int(preset['dither_bits'])}-bit")
     print(f"Output: {output_dir}/")
     print("=" * 70)
     print()
@@ -605,7 +661,6 @@ Examples:
     print("-" * 70)
 
     workers = args.jobs if args.jobs > 0 else os.cpu_count()
-    eq = eq_settings if eq_settings else None
 
     # Build list of (wav_file, output_path) pairs
     tasks = [(wf, output_dir / wf.name) for wf in wav_files]
@@ -618,8 +673,10 @@ Examples:
         for wav_file, output_path in tasks:
             progress.update(wav_file.name)
             _, result = _process_one_track(
-                wav_file, output_path, args.target_lufs, eq, args.ceiling,
-                args.dry_run, compress_ratio=args.compress_ratio,
+                wav_file, output_path,
+                ceiling_db=args.ceiling,
+                dry_run=args.dry_run,
+                preset=preset,
             )
             if result is None:
                 continue
@@ -634,8 +691,10 @@ Examples:
         with ProcessPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(
-                    _process_one_track, wf, op, args.target_lufs, eq, args.ceiling,
-                    args.dry_run, args.compress_ratio,
+                    _process_one_track, wf, op,
+                    ceiling_db=args.ceiling,
+                    dry_run=args.dry_run,
+                    preset=preset,
                 ): i
                 for i, (wf, op) in enumerate(tasks)
             }
