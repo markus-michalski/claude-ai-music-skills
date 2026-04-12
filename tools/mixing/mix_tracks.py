@@ -16,11 +16,12 @@ import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import soundfile as sf
 from scipy import signal
+from scipy.interpolate import CubicSpline
 
 try:
     import noisereduce as nr
@@ -474,66 +475,169 @@ def gentle_compress(data: Any, rate: int, threshold_db: float = -15.0, ratio: fl
         return result
 
 
-def remove_clicks(data: Any, rate: int, threshold: float = 6.0) -> Any:
+def remove_clicks(
+    data: Any,
+    rate: int,
+    threshold: float = 6.0,
+    peak_ratio: float | None = None,
+    repair: str = "linear",
+    window_ms: float = 1.5,
+) -> tuple[Any, int]:
     """Detect and remove clicks/pops via interpolation.
 
-    Looks for sudden amplitude spikes relative to local neighborhood
-    and replaces them with linearly interpolated values.
+    Two detection modes:
+
+    - std path (default, `peak_ratio=None`): flag samples where |diff| >
+      threshold * std(diff). Backward-compatible with pre-#289 behavior.
+    - windowed peak/rms path (`peak_ratio` set): flag 10 ms windows where
+      peak/rms > peak_ratio, then locate the maximum-|sample| inside each
+      flagged window. Semantics match `qc_tracks._check_clicks` so polish
+      and QC speak the same language.
+
+    Two repair modes:
+
+    - "linear" (default): two-sample linear interpolation across the click
+      index, same as pre-#289. Safer on dense full-mix content.
+    - "cubic": fit a `scipy.interpolate.CubicSpline` through four clean
+      samples (two on each side, `window_ms` away from the click) and
+      overwrite the click region with the spline evaluated on the excised
+      sample indices. For use on isolated stems where the spline can
+      exploit the thin spectral content around the click.
 
     Args:
-        data: Audio data
-        rate: Sample rate
-        threshold: Detection threshold in standard deviations
+        data: Audio data (mono or stereo).
+        rate: Sample rate in Hz.
+        threshold: std-path detection multiplier. Ignored when `peak_ratio`
+            is set. `threshold <= 0` is a passthrough (returns input).
+        peak_ratio: Peak-to-RMS ratio over a 10 ms window above which the
+            window is flagged as a click. When None the std path is used.
+        repair: "linear" or "cubic". Cubic requires at least two clean
+            samples ±`window_ms` away from the click; falls back to linear
+            if neighbors are unavailable (near the start/end of the buffer).
+        window_ms: Half-width of the cubic repair window, in milliseconds.
 
     Returns:
-        Click-removed audio data.
+        `(repaired_data, clicks_removed)` where `clicks_removed` is the
+        number of click sites repaired (not windows flagged — coincident
+        clicks in the same window count once).
     """
-    if threshold <= 0:
-        return data
+    if threshold <= 0 and peak_ratio is None:
+        return data, 0
 
-    def _remove_clicks_channel(channel: Any) -> Any:
-        # Calculate first-order difference
+    if repair not in ("linear", "cubic"):
+        raise ValueError(f"repair must be 'linear' or 'cubic', got {repair!r}")
+
+    window_samples = max(int(rate * 0.01), 1)  # 10 ms, matches qc_tracks
+    neighbor_offset = max(int(rate * window_ms / 1000.0), 2)
+
+    def _detect_std(channel: Any) -> Any:
         diff = np.diff(channel, prepend=channel[0])
-
-        # Guard against very short audio
         if len(channel) < 3:
-            return channel
-
+            return np.zeros(0, dtype=np.int64)
         local_std = np.std(diff)
         if local_std < 1e-10:
-            return channel
+            return np.zeros(0, dtype=np.int64)
+        mask = np.abs(diff) > threshold * local_std
+        return np.where(mask)[0]
 
-        # Detect clicks: spikes above threshold * std
-        click_mask = np.abs(diff) > threshold * local_std
+    def _detect_peak_ratio(channel: Any) -> Any:
+        """Windowed detection matching qc_tracks._check_clicks."""
+        assert peak_ratio is not None  # guarded by _process_channel caller
+        if len(channel) < window_samples:
+            return np.zeros(0, dtype=np.int64)
+        indices: list[int] = []
+        for start in range(0, len(channel) - window_samples, window_samples):
+            window = channel[start:start + window_samples]
+            rms = float(np.sqrt(np.mean(window ** 2)))
+            if rms < 1e-8:
+                continue
+            peak = float(np.max(np.abs(window)))
+            if peak > peak_ratio * rms:
+                local = int(np.argmax(np.abs(window)))
+                indices.append(start + local)
+        return np.array(indices, dtype=np.int64)
 
-        if not np.any(click_mask):
-            return channel
-
+    def _repair_linear(channel: Any, indices: Any) -> Any:
+        """Two-sample linear interp — preserves pre-#289 behavior."""
         result = channel.copy()
-        click_indices = np.where(click_mask)[0]
-
-        # Interpolate over click regions
-        for idx in click_indices:
-            # Find clean samples on either side
+        n = len(channel)
+        click_set = set(int(i) for i in indices)
+        for idx in indices:
             left = max(0, idx - 1)
-            right = min(len(channel) - 1, idx + 1)
-            while left > 0 and click_mask[left]:
+            right = min(n - 1, idx + 1)
+            while left > 0 and int(left) in click_set:
                 left -= 1
-            while right < len(channel) - 1 and click_mask[right]:
+            while right < n - 1 and int(right) in click_set:
                 right += 1
-            # Linear interpolation
             if left != right:
                 result[idx] = channel[left] + (channel[right] - channel[left]) * (idx - left) / (right - left)
-
         return result
+
+    def _repair_cubic(channel: Any, indices: Any) -> Any:
+        """Cubic spline repair across ±window_ms clean neighbors."""
+        result = channel.copy()
+        n = len(channel)
+        click_set = set(int(i) for i in indices)
+        for idx in indices:
+            lo = idx - neighbor_offset
+            hi = idx + neighbor_offset
+            if lo < 0 or hi >= n:
+                # Near buffer edge — fall back to linear repair
+                left = max(0, idx - 1)
+                right = min(n - 1, idx + 1)
+                if left != right:
+                    result[idx] = channel[left] + (channel[right] - channel[left]) * (idx - left) / (right - left)
+                continue
+            # Pick four clean anchors: two each side of click, skipping
+            # any that are themselves flagged clicks.
+            def _clean_at(center: int, direction: int) -> int:
+                probe = center
+                while 0 <= probe < n and int(probe) in click_set:
+                    probe += direction
+                return probe if 0 <= probe < n else center
+
+            x_lo_far = _clean_at(lo, -1)
+            x_lo_near = _clean_at(max(lo, idx - neighbor_offset // 2), -1)
+            x_hi_near = _clean_at(min(hi, idx + neighbor_offset // 2), 1)
+            x_hi_far = _clean_at(hi, 1)
+            xs = sorted({x_lo_far, x_lo_near, x_hi_near, x_hi_far})
+            # Seeds {lo, idx±neighbor_offset//2, hi} are always distinct
+            # and never equal idx (outer guards and _clean_at's outward-
+            # only probe direction ensure this), so no degenerate-case
+            # fallback is needed here.
+            ys = [float(channel[x]) for x in xs]
+            spline = CubicSpline(xs, ys)
+            # Repair the central sample; widen to ±1 sample so two-sample
+            # fingerprints (like the `+A, -A` pair _generate_click makes)
+            # are covered.
+            for target in range(max(0, idx - 1), min(n, idx + 2)):
+                result[target] = float(spline(target))
+        return result
+
+    def _process_channel(channel: Any) -> tuple[Any, int]:
+        if peak_ratio is not None:
+            indices = _detect_peak_ratio(channel)
+        else:
+            indices = _detect_std(channel)
+        if len(indices) == 0:
+            return channel, 0
+        if repair == "cubic":
+            repaired = _repair_cubic(channel, indices)
+        else:
+            repaired = _repair_linear(channel, indices)
+        return repaired, int(len(indices))
 
     if len(data.shape) == 1:
-        return _remove_clicks_channel(data)
-    else:
-        result = np.zeros_like(data)
-        for ch in range(data.shape[1]):
-            result[:, ch] = _remove_clicks_channel(data[:, ch])
-        return result
+        repaired, n_clicks = _process_channel(data)
+        return repaired, n_clicks
+
+    result = np.zeros_like(data)
+    total_clicks = 0
+    for ch in range(data.shape[1]):
+        repaired, n_clicks = _process_channel(data[:, ch])
+        result[:, ch] = repaired
+        total_clicks += n_clicks
+    return result, total_clicks
 
 
 def enhance_stereo(data: Any, rate: int, amount: float = 0.2) -> Any:
@@ -847,6 +951,45 @@ def _apply_character_effects(
 # ─── Per-Stem Processing Chains ──────────────────────────────────────
 
 
+def _resolve_master_click_thresholds(genre: str | None) -> tuple[float | None, int | None]:
+    """Look up `click_peak_ratio` and `click_fail_count` for a genre from
+    the **mastering** genre presets, so the polish declicker uses the same
+    detection semantics as the QC click detector (#285).
+
+    Every genre in the mastering preset list gets overlay values: tuned
+    genres (e.g. electronic, idm, metal) return their raised thresholds;
+    genres without explicit click fields fall back to the QC baseline
+    (6.0 / 3) via the preset defaults in `master_tracks._PRESET_DEFAULTS`.
+    This keeps polish and QC aligned for *every* genre, not just tuned
+    ones — a track polished with `genre='house'` runs the same detection
+    algorithm QC will use later.
+
+    Args:
+        genre: Genre name (e.g., "idm"). May be None or an empty string.
+
+    Returns:
+        `(peak_ratio, fail_count)`. Both are None when `genre` is falsy,
+        or when `genre` is not present in the mastering preset list at
+        all (e.g. a user-invented mix-only genre), or when the mastering
+        module fails to import.
+    """
+    if not genre:
+        return None, None
+    try:
+        from tools.mastering.master_tracks import GENRE_PRESETS
+    except ImportError:
+        return None, None
+    preset = GENRE_PRESETS.get(genre.lower())
+    if preset is None:
+        return None, None
+    peak_ratio = preset.get('click_peak_ratio')
+    fail_count = preset.get('click_fail_count')
+    return (
+        float(peak_ratio) if peak_ratio is not None else None,
+        int(fail_count) if fail_count is not None else None,
+    )
+
+
 def _get_stem_settings(stem_name: str, genre: str | None = None) -> dict[str, Any]:
     """Get processing settings for a specific stem type.
 
@@ -866,9 +1009,19 @@ def _get_stem_settings(stem_name: str, genre: str | None = None) -> dict[str, An
         genre_key = genre.lower()
         genre_presets = presets.get('genres', {}).get(genre_key, {})
         genre_stem = genre_presets.get(stem_name, {})
-        return _deep_merge(stem_defaults, genre_stem)
+        result: dict[str, Any] = _deep_merge(stem_defaults, genre_stem)
+    else:
+        result = stem_defaults.copy()
 
-    result: dict[str, Any] = stem_defaults.copy()
+    # Overlay mastering genre's click thresholds so polish and QC speak
+    # the same language (#289). Mix-preset overrides (`click_peak_ratio`
+    # under `defaults.<stem>.` or `genres.<g>.<stem>.`) win if present,
+    # so user overrides still work.
+    peak_ratio, fail_count = _resolve_master_click_thresholds(genre)
+    if peak_ratio is not None and 'click_peak_ratio' not in result:
+        result['click_peak_ratio'] = peak_ratio
+    if fail_count is not None and 'click_fail_count' not in result:
+        result['click_fail_count'] = fail_count
     return result
 
 
@@ -889,9 +1042,15 @@ def _get_full_mix_settings(genre: str | None = None) -> dict[str, Any]:
         genre_key = genre.lower()
         genre_presets = presets.get('genres', {}).get(genre_key, {})
         genre_full_mix = genre_presets.get('full_mix', {})
-        return _deep_merge(full_mix_defaults, genre_full_mix)
+        result: dict[str, Any] = _deep_merge(full_mix_defaults, genre_full_mix)
+    else:
+        result = full_mix_defaults.copy()
 
-    result: dict[str, Any] = full_mix_defaults.copy()
+    peak_ratio, fail_count = _resolve_master_click_thresholds(genre)
+    if peak_ratio is not None and 'click_peak_ratio' not in result:
+        result['click_peak_ratio'] = peak_ratio
+    if fail_count is not None and 'click_fail_count' not in result:
+        result['click_fail_count'] = fail_count
     return result
 
 
@@ -989,13 +1148,18 @@ def process_backing_vocals(data: Any, rate: int, settings: dict[str, Any] | None
     return data
 
 
-def process_drums(data: Any, rate: int, settings: dict[str, Any] | None = None) -> Any:
+def process_drums(data: Any, rate: int, settings: dict[str, Any] | None = None,
+                  report: dict[str, Any] | None = None) -> Any:
     """Process drum stem: click removal -> transient shape -> compress (fast attack) -> sat.
 
     Args:
         data: Audio data
         rate: Sample rate
         settings: Dict of drum processing settings
+        report: Optional dict; when provided, this function **accumulates**
+            the repaired-click count into ``report['clicks_removed']``
+            (creating the key if absent). Pass a fresh dict per call if you
+            want per-call totals.
 
     Returns:
         Processed audio data.
@@ -1004,8 +1168,18 @@ def process_drums(data: Any, rate: int, settings: dict[str, Any] | None = None) 
 
     # Click removal
     if settings.get('click_removal', True):
-        click_threshold = settings.get('click_threshold', 6.0)
-        data = remove_clicks(data, rate, threshold=click_threshold)
+        peak_ratio = settings.get('click_peak_ratio')
+        if peak_ratio is not None:
+            data, n_clicks = remove_clicks(
+                data, rate,
+                peak_ratio=float(peak_ratio),
+                repair="cubic",
+            )
+        else:
+            click_threshold = settings.get('click_threshold', 6.0)
+            data, n_clicks = remove_clicks(data, rate, threshold=click_threshold)
+        if report is not None:
+            report['clicks_removed'] = report.get('clicks_removed', 0) + int(n_clicks)
 
     # Transient shaping (before compression to preserve punch)
     attack_db = settings.get('transient_attack_db', 0)
@@ -1397,7 +1571,8 @@ def process_woodwinds(data: Any, rate: int, settings: dict[str, Any] | None = No
     return data
 
 
-def process_percussion(data: Any, rate: int, settings: dict[str, Any] | None = None) -> Any:
+def process_percussion(data: Any, rate: int, settings: dict[str, Any] | None = None,
+                       report: dict[str, Any] | None = None) -> Any:
     """Process percussion stem: highpass -> click removal -> presence -> high tame -> width -> compress -> sat.
 
     Distinct from drums — handles congas, shakers, tambourines etc. Presence at
@@ -1408,6 +1583,10 @@ def process_percussion(data: Any, rate: int, settings: dict[str, Any] | None = N
         data: Audio data
         rate: Sample rate
         settings: Dict of percussion processing settings
+        report: Optional dict; when provided, this function **accumulates**
+            the repaired-click count into ``report['clicks_removed']``
+            (creating the key if absent). Pass a fresh dict per call if you
+            want per-call totals.
 
     Returns:
         Processed audio data.
@@ -1421,8 +1600,18 @@ def process_percussion(data: Any, rate: int, settings: dict[str, Any] | None = N
 
     # Click removal
     if settings.get('click_removal', True):
-        click_threshold = settings.get('click_threshold', 6.0)
-        data = remove_clicks(data, rate, threshold=click_threshold)
+        peak_ratio = settings.get('click_peak_ratio')
+        if peak_ratio is not None:
+            data, n_clicks = remove_clicks(
+                data, rate,
+                peak_ratio=float(peak_ratio),
+                repair="cubic",
+            )
+        else:
+            click_threshold = settings.get('click_threshold', 6.0)
+            data, n_clicks = remove_clicks(data, rate, threshold=click_threshold)
+        if report is not None:
+            report['clicks_removed'] = report.get('clicks_removed', 0) + int(n_clicks)
 
     # Transient shaping (before compression to preserve punch)
     attack_db = settings.get('transient_attack_db', 0)
@@ -1495,8 +1684,12 @@ def process_other(data: Any, rate: int, settings: dict[str, Any] | None = None) 
     return data
 
 
-# Stem processor dispatch
-STEM_PROCESSORS = {
+# Stem processor dispatch. Callable[..., Any] covers the signature
+# asymmetry — drums and percussion accept an extra `report` kwarg that
+# the other processors don't; callers that want to pass `report` dispatch
+# directly to `process_drums` / `process_percussion` instead of going
+# through this registry.
+STEM_PROCESSORS: dict[str, Callable[..., Any]] = {
     'vocals': process_vocals,
     'backing_vocals': process_backing_vocals,
     'drums': process_drums,
@@ -1595,11 +1788,24 @@ def mix_track_stems(stem_paths: dict[str, str | list[str]], output_path: Path | 
         pre_peak = float(np.max(np.abs(data)))
         pre_rms = float(np.sqrt(np.mean(data ** 2)))
 
+        # Only drums/percussion write clicks_removed into the report dict —
+        # keeping the per-processor kwarg asymmetric is intentional (the
+        # other 10 processors have no metric to report). The dict is
+        # initialized empty so the `get('clicks_removed', 0)` fallback in
+        # the append-below always has a value, even for non-declicking stems.
+        stem_report: dict[str, Any] = {'clicks_removed': 0}
         if not dry_run:
             # Get settings and process
             settings = _get_stem_settings(stem_name, genre)
-            processor = STEM_PROCESSORS[stem_name]
-            data = processor(data, rate, settings)
+            # Dispatch declicking stems directly so mypy sees the
+            # `report` kwarg; other stems go through STEM_PROCESSORS.
+            if stem_name == 'drums':
+                data = process_drums(data, rate, settings, report=stem_report)
+            elif stem_name == 'percussion':
+                data = process_percussion(data, rate, settings, report=stem_report)
+            else:
+                processor = STEM_PROCESSORS[stem_name]
+                data = processor(data, rate, settings)
 
             # Get remix gain
             gains[stem_name] = settings.get('gain_db', 0.0)
@@ -1615,6 +1821,7 @@ def mix_track_stems(stem_paths: dict[str, str | list[str]], output_path: Path | 
             'pre_rms': pre_rms,
             'post_peak': post_peak,
             'post_rms': post_rms,
+            'clicks_removed': int(stem_report['clicks_removed']),
         })
 
     if not processed_stems:
@@ -1662,6 +1869,7 @@ def mix_track_full(input_path: Path | str, output_path: Path | str,
             'filename': input_path.name,
             'skipped': True,
             'dry_run': dry_run,
+            'clicks_removed': 0,
         }
 
     # Handle mono
@@ -1673,12 +1881,13 @@ def mix_track_full(input_path: Path | str, output_path: Path | str,
     pre_peak = float(np.max(np.abs(data)))
     pre_rms = float(np.sqrt(np.mean(data ** 2)))
 
-    result = {
+    result: dict[str, Any] = {
         'mode': 'full_mix',
         'filename': input_path.name,
         'pre_peak': pre_peak,
         'pre_rms': pre_rms,
         'dry_run': dry_run,
+        'clicks_removed': 0,
     }
 
     if not dry_run:
@@ -1694,9 +1903,22 @@ def mix_track_full(input_path: Path | str, output_path: Path | str,
         if hp_cutoff > 0:
             data = apply_highpass(data, rate, cutoff=hp_cutoff)
 
-        # Click removal
+        # Click removal — full-mix stays on linear repair per #289
+        # (dense mix content amplifies the artefacts of any deeper
+        # surgical repair). peak_ratio is preferred when the genre
+        # preset supplies one so polish and QC stay aligned.
+        clicks_removed = 0
         if settings.get('click_removal', True):
-            data = remove_clicks(data, rate)
+            peak_ratio = settings.get('click_peak_ratio')
+            if peak_ratio is not None:
+                data, clicks_removed = remove_clicks(
+                    data, rate,
+                    peak_ratio=float(peak_ratio),
+                    repair="linear",
+                )
+            else:
+                data, clicks_removed = remove_clicks(data, rate)
+        result['clicks_removed'] = int(clicks_removed)
 
         # Mud cut
         mud_cut_db = settings.get('mud_cut_db', -2.0)

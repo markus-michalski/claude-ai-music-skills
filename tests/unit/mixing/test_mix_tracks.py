@@ -56,6 +56,7 @@ from tools.mixing.mix_tracks import (
     discover_stems,
     _get_stem_settings,
     _get_full_mix_settings,
+    _resolve_master_click_thresholds,
 )
 
 
@@ -84,7 +85,9 @@ def _generate_noise(duration=1.0, rate=44100, amplitude=0.3, stereo=True):
 def _generate_click(duration=1.0, rate=44100, click_pos=0.5, amplitude=0.5):
     """Generate a signal with an artificial click/pop."""
     t = np.linspace(0, duration, int(rate * duration), endpoint=False)
-    data = (amplitude * 0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
+    # Background kept quiet (0.1x) so a 10 ms window containing the click
+    # has peak/rms > 6.0 — required by TestRemoveClicksPeakRatio tests.
+    data = (amplitude * 0.1 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
     # Insert a sharp click
     click_idx = int(click_pos * rate)
     if click_idx < len(data):
@@ -422,33 +425,144 @@ class TestRemoveClicks:
     def test_removes_artificial_click(self):
         """Should detect and reduce artificial clicks."""
         data, rate = _generate_click(amplitude=0.5)
-        result = remove_clicks(data, rate, threshold=4.0)
+        result, n_clicks = remove_clicks(data, rate, threshold=4.0)
         # The click sample should be reduced
         click_idx = int(0.5 * rate)
         assert np.abs(result[click_idx, 0]) < np.abs(data[click_idx, 0])
+        assert n_clicks > 0
 
     def test_clean_signal_unchanged(self):
         """Clean signal without clicks should be mostly unchanged."""
         data, rate = _generate_sine(amplitude=0.3)
-        result = remove_clicks(data, rate, threshold=6.0)
+        result, n_clicks = remove_clicks(data, rate, threshold=6.0)
         # Most samples should be identical
         diff = np.max(np.abs(result - data))
         assert diff < 0.1
+        assert n_clicks == 0
 
     def test_zero_threshold_is_passthrough(self):
         data, rate = _generate_sine()
-        result = remove_clicks(data, rate, threshold=0)
+        result, n_clicks = remove_clicks(data, rate, threshold=0)
         assert np.array_equal(result, data)
+        assert n_clicks == 0
 
     def test_mono_input(self):
         data, rate = _generate_sine(stereo=False)
-        result = remove_clicks(data, rate)
+        result, n_clicks = remove_clicks(data, rate)
         assert result.shape == data.shape
 
     def test_output_is_finite(self):
         data, rate = _generate_click()
-        result = remove_clicks(data, rate)
+        result, n_clicks = remove_clicks(data, rate)
         assert np.all(np.isfinite(result))
+
+
+class TestRemoveClicksPeakRatio:
+    """Tests for the windowed peak/rms detection path (#289)."""
+
+    def test_peak_ratio_detects_high_peak_rms_window(self):
+        """A lone spike in an otherwise-quiet sine should register as a click."""
+        data, rate = _generate_click(amplitude=0.5)
+        # Default peak_ratio=6.0 matches QC's hard-coded default
+        result, n_clicks = remove_clicks(data, rate, peak_ratio=6.0)
+        assert n_clicks >= 1
+        # Click sample reduced in both channels
+        click_idx = int(0.5 * rate)
+        assert np.abs(result[click_idx, 0]) < np.abs(data[click_idx, 0])
+
+    def test_strict_peak_ratio_skips_moderate_click(self):
+        """A strict peak_ratio (50.0) should not flag a modest transient —
+        higher ratios demand bigger peak/rms separation before flagging."""
+        data, rate = _generate_click(amplitude=0.5)
+        # peak/rms of this click in a 10 ms window is ~10.2; a strict 50.0
+        # ratio requires ~5× higher separation, so no click should fire.
+        result, n_clicks = remove_clicks(data, rate, peak_ratio=50.0)
+        assert n_clicks == 0
+        assert np.array_equal(result, data)
+
+    def test_peak_ratio_takes_precedence_over_threshold(self):
+        """When both `threshold` and `peak_ratio` are set, peak_ratio wins."""
+        data, rate = _generate_click(amplitude=0.5)
+        # threshold=0 would passthrough in std path; peak_ratio path must
+        # still detect the click.
+        result, n_clicks = remove_clicks(data, rate, threshold=0, peak_ratio=6.0)
+        assert n_clicks >= 1
+
+    def test_peak_ratio_on_mono(self):
+        data, rate = _generate_click(amplitude=0.5)
+        mono = data[:, 0]
+        result, n_clicks = remove_clicks(mono, rate, peak_ratio=6.0)
+        assert result.shape == mono.shape
+        assert n_clicks >= 1
+
+
+class TestRemoveClicksCubicRepair:
+    """Tests for the cubic-spline stem-tier repair path (#289)."""
+
+    def test_cubic_repair_differs_from_linear_on_stem(self):
+        """Cubic repair should produce a different signal than linear on
+        an isolated stem with a click — this is the whole point of the
+        stem-tier upgrade."""
+        data, rate = _generate_click(amplitude=0.5)
+        linear_result, _ = remove_clicks(data, rate, peak_ratio=6.0, repair="linear")
+        cubic_result, _ = remove_clicks(data, rate, peak_ratio=6.0, repair="cubic")
+        # Same detections, different repair — the repaired samples must differ.
+        click_idx = int(0.5 * rate)
+        assert not np.allclose(
+            linear_result[click_idx - 1:click_idx + 2, 0],
+            cubic_result[click_idx - 1:click_idx + 2, 0],
+        )
+
+    def test_cubic_repair_is_finite(self):
+        """Spline repair must never produce NaN or Inf."""
+        data, rate = _generate_click(amplitude=0.5)
+        result, _ = remove_clicks(data, rate, peak_ratio=6.0, repair="cubic")
+        assert np.all(np.isfinite(result))
+
+    def test_cubic_repair_reduces_click_amplitude(self):
+        """Repaired click sample should be closer to the local sine value
+        than the original spike."""
+        data, rate = _generate_click(amplitude=0.5)
+        result, _ = remove_clicks(data, rate, peak_ratio=6.0, repair="cubic")
+        click_idx = int(0.5 * rate)
+        # Original click is |~0.495|; local sine at 440 Hz amp 0.05 is
+        # near zero at t=0.5s. Repaired sample should be near zero — 0.05
+        # is a generous upper bound that would still catch a regression
+        # leaving a partially-repaired click.
+        assert np.abs(result[click_idx, 0]) < 0.05
+
+    def test_cubic_repair_near_buffer_edge_falls_back_to_linear(self):
+        """A click within window_ms of the start should not crash; it
+        should fall back to linear repair."""
+        rate = 44100
+        t = np.linspace(0, 1.0, rate, endpoint=False)
+        mono = (0.15 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
+        # Inject a click at sample 5 (well inside the default 1.5 ms window
+        # which is ~66 samples at 44.1 kHz).
+        mono[5] = 0.95
+        data = np.column_stack([mono, mono])
+        result, n_clicks = remove_clicks(data, rate, peak_ratio=6.0, repair="cubic")
+        assert np.all(np.isfinite(result))
+        assert n_clicks >= 1
+
+    def test_invalid_repair_raises(self):
+        data, rate = _generate_click()
+        with pytest.raises(ValueError, match="repair must be"):
+            remove_clicks(data, rate, peak_ratio=6.0, repair="nearest")
+
+    def test_stem_repair_differs_from_full_mix_repair_on_isolated_stem(self):
+        """Per #289 acceptance: 'stem repair differs from full-mix repair
+        on an isolated stem with a click.' Same signal, same detection,
+        two repair strategies — they must produce distinguishable output."""
+        data, rate = _generate_click(amplitude=0.5)
+        stem_repaired, _ = remove_clicks(data, rate, peak_ratio=6.0, repair="cubic")
+        full_repaired, _ = remove_clicks(data, rate, peak_ratio=6.0, repair="linear")
+        click_idx = int(0.5 * rate)
+        # Nontrivial difference in the repaired neighborhood
+        assert np.max(np.abs(
+            stem_repaired[click_idx - 1:click_idx + 2, 0]
+            - full_repaired[click_idx - 1:click_idx + 2, 0]
+        )) > 1e-6
 
 
 # ─── Tests: reduce_noise ─────────────────────────────────────────────
@@ -654,6 +768,50 @@ class TestProcessDrums:
         }
         result = process_drums(data, rate, settings=settings)
         assert np.all(np.isfinite(result))
+
+    def test_reports_clicks_removed_when_given_report_dict(self):
+        """`process_drums` should record how many clicks it repaired when
+        a report dict is passed in."""
+        data, rate = _generate_click(amplitude=0.5)
+        report: dict[str, int] = {}
+        settings = _get_stem_settings('drums', genre='electronic')
+        result = process_drums(data, rate, settings=settings, report=report)
+        assert np.all(np.isfinite(result))
+        # Synthetic click with a high amplitude should always get flagged
+        # by the peak_ratio=8.0 detector on the electronic preset.
+        assert report.get('clicks_removed', 0) >= 1
+
+    def test_uses_cubic_repair_when_peak_ratio_is_set(self):
+        """With a `click_peak_ratio` setting, the drum processor should
+        use the cubic (stem-tier) repair, not the legacy std+linear path."""
+        data, rate = _generate_click(amplitude=0.5)
+        # Force the ratio path by passing click_peak_ratio directly.
+        settings = {
+            'click_removal': True,
+            'click_peak_ratio': 6.0,
+            'compress_threshold_db': -12.0,
+            'compress_ratio': 2.0,
+            'compress_attack_ms': 5.0,
+        }
+        # And a sibling baseline using the legacy std path.
+        baseline_settings = {
+            'click_removal': True,
+            'click_threshold': 6.0,
+            'compress_threshold_db': -12.0,
+            'compress_ratio': 2.0,
+            'compress_attack_ms': 5.0,
+        }
+        cubic = process_drums(data.copy(), rate, settings=settings)
+        linear = process_drums(data.copy(), rate, settings=baseline_settings)
+        # The *full* processor chain (compressor, saturator) runs on both,
+        # so we compare the early-pipeline sample neighborhood around the
+        # click index — must be different because repair differs.
+        click_idx = int(0.5 * rate)
+        assert not np.allclose(
+            cubic[click_idx - 1:click_idx + 2, 0],
+            linear[click_idx - 1:click_idx + 2, 0],
+            atol=1e-6,
+        )
 
 
 class TestProcessBass:
@@ -953,6 +1111,14 @@ class TestProcessPercussion:
         result = process_percussion(data, rate, settings=settings)
         assert np.all(np.isfinite(result))
 
+    def test_reports_clicks_removed_when_given_report_dict(self):
+        data, rate = _generate_click(amplitude=0.5)
+        report: dict[str, int] = {}
+        settings = _get_stem_settings('percussion', genre='electronic')
+        result = process_percussion(data, rate, settings=settings, report=report)
+        assert np.all(np.isfinite(result))
+        assert report.get('clicks_removed', 0) >= 1
+
 
 # ─── Tests: Full Pipeline (Stems) ────────────────────────────────────
 
@@ -1056,6 +1222,46 @@ class TestMixTrackStems:
         assert len(result['stems_processed']) == 1
         assert result['stems_processed'][0]['stem'] == 'drums'
         assert Path(output_path).exists()
+
+    def test_result_reports_clicks_removed_per_stem(self, tmp_path):
+        """mix_track_stems should surface clicks_removed on each stem that
+        ran the declicker."""
+        rate = 44100
+        # Build a drums-stem wav with a click at t≈0.5s.
+        # Offset by 50 samples so the click falls mid-window (not on a
+        # 10 ms window boundary) — this prevents the click's energy from
+        # being diluted across two windows, keeping peak/RMS well above 8.0.
+        # Sine amplitude of 0.10 gives peak/RMS ≈ 9.9 > electronic threshold 8.0.
+        t = np.linspace(0, 1.0, rate, endpoint=False)
+        mono = (0.10 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
+        click_idx = int(0.5 * rate) + 50  # 22100 — not on a 441-sample boundary
+        mono[click_idx] = 0.95
+        mono[click_idx + 1] = -0.95
+        drums = np.column_stack([mono, mono])
+
+        # And a clean vocal stem for completeness
+        vocal_mono = (0.1 * np.sin(2 * np.pi * 330 * t)).astype(np.float64)
+        vocals = np.column_stack([vocal_mono, vocal_mono])
+
+        drums_path = tmp_path / "drums.wav"
+        vocals_path = tmp_path / "vocals.wav"
+        sf.write(str(drums_path), drums, rate, subtype='PCM_16')
+        sf.write(str(vocals_path), vocals, rate, subtype='PCM_16')
+        out_path = tmp_path / "out.wav"
+
+        result = mix_track_stems(
+            {'drums': str(drums_path), 'vocals': str(vocals_path)},
+            out_path,
+            genre='electronic',
+        )
+
+        # Each stem entry should carry clicks_removed; drums must be > 0.
+        by_stem = {s['stem']: s for s in result['stems_processed']}
+        assert 'clicks_removed' in by_stem['drums']
+        assert by_stem['drums']['clicks_removed'] >= 1
+        # Vocals don't run the declicker, so clicks_removed should be 0
+        # or absent; assert the presence contract only for declicking stems.
+        assert by_stem['vocals'].get('clicks_removed', 0) == 0
 
 
 # ─── Tests: Stem Discovery ───────────────────────────────────────────
@@ -1422,6 +1628,48 @@ class TestMixTrackFull:
         assert 'post_peak' in result
         assert 'post_rms' in result
 
+    def test_full_mix_reports_clicks_removed(self, tmp_path):
+        """mix_track_full's result should include clicks_removed."""
+        rate = 44100
+        t = np.linspace(0, 1.0, rate, endpoint=False)
+        # Quiet sine background (0.10) so the click dominates a 10ms window.
+        mono = (0.10 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
+        # Click mid-window (not on window boundary) at t≈0.5s + 50 samples.
+        click_idx = int(0.5 * rate) + 50
+        mono[click_idx] = 0.95
+        mono[click_idx + 1] = -0.95
+        data = np.column_stack([mono, mono])
+
+        in_path = tmp_path / "in.wav"
+        out_path = tmp_path / "out.wav"
+        sf.write(str(in_path), data, rate, subtype='PCM_16')
+
+        result = mix_track_full(in_path, out_path, genre='electronic')
+        assert 'clicks_removed' in result
+        # Electronic preset peak_ratio=8.0. With 0.10 background + mid-window
+        # 0.95 click, ratio is ~9.9, above the threshold.
+        assert isinstance(result['clicks_removed'], int)
+        assert result['clicks_removed'] >= 1
+
+    def test_full_mix_linear_repair_catches_obvious_click(self, tmp_path):
+        """A big click against a quiet sine should register clicks_removed>0
+        even on the legacy std-path (no genre → no peak_ratio → std default)."""
+        rate = 44100
+        t = np.linspace(0, 1.0, rate, endpoint=False)
+        mono = (0.05 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
+        click_idx = int(0.5 * rate) + 50
+        mono[click_idx] = 0.9
+        mono[click_idx + 1] = -0.9
+        data = np.column_stack([mono, mono])
+
+        in_path = tmp_path / "in.wav"
+        out_path = tmp_path / "out.wav"
+        sf.write(str(in_path), data, rate, subtype='PCM_16')
+
+        # No genre → std path with default threshold=6.0.
+        result = mix_track_full(in_path, out_path)
+        assert result['clicks_removed'] >= 1
+
 
 # ─── Tests: Preset Loading ───────────────────────────────────────────
 
@@ -1627,6 +1875,34 @@ class TestOverrideMerging:
         presets = load_mix_presets()
         assert 'rock' in presets['genres']
         assert 'pop' in presets['genres']
+
+
+class TestMasterClickThresholdsThreaded:
+    """Verify polish pipeline picks up click_peak_ratio / click_fail_count
+    from the mastering genre preset so polish and QC stay aligned (#289)."""
+
+    def test_stem_settings_inherit_master_click_thresholds(self):
+        # 'electronic' is one of the mastering-tuned genres (ratio 8.0, fail 15)
+        settings = _get_stem_settings('drums', genre='electronic')
+        assert settings.get('click_peak_ratio') == 8.0
+        assert settings.get('click_fail_count') == 15
+
+    def test_full_mix_settings_inherit_master_click_thresholds(self):
+        settings = _get_full_mix_settings(genre='electronic')
+        assert settings.get('click_peak_ratio') == 8.0
+        assert settings.get('click_fail_count') == 15
+
+    def test_no_genre_leaves_click_thresholds_unset(self):
+        settings = _get_stem_settings('drums')
+        assert 'click_peak_ratio' not in settings
+        assert 'click_fail_count' not in settings
+
+    def test_unknown_genre_does_not_raise(self):
+        # mix-only / user-added genre — helper must fail soft and inject
+        # nothing rather than defaulting to 6.0/3.
+        settings = _get_full_mix_settings(genre='totally-invented-genre')
+        assert 'click_peak_ratio' not in settings
+        assert 'click_fail_count' not in settings
 
 
 # ─── Character Effects Tests ─────────────────────────────────────────
