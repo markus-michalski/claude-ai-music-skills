@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any
 from handlers import _shared
 from handlers._shared import _normalize_slug
 from handlers._shared import _resolve_audio_dir as _resolve_audio_dir  # noqa: F401
+
+logger = logging.getLogger("bitwize-music-state")
 
 
 def _extract_track_number_from_stem(stem: str) -> int | None:
@@ -90,14 +93,23 @@ def _import_sheet_music_module(module_name: str) -> Any:
     import importlib.util
     assert _shared.PLUGIN_ROOT is not None
     module_path = _shared.PLUGIN_ROOT / "tools" / "sheet-music" / f"{module_name}.py"
-    spec = importlib.util.spec_from_file_location(
-        f"sheet_music_{module_name}", str(module_path)
-    )
-    if spec is None or spec.loader is None:
-        return None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"sheet_music_{module_name}", str(module_path)
+        )
+        if spec is None or spec.loader is None:
+            logger.warning(
+                "Optional module %s not available: Could not load import spec for %s",
+                module_name,
+                module_path,
+            )
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as e:
+        logger.warning("Optional module %s not available: %s", module_name, e)
+        raise
 
 
 def _import_cloud_module(module_name: str) -> Any:
@@ -105,14 +117,23 @@ def _import_cloud_module(module_name: str) -> Any:
     import importlib.util
     assert _shared.PLUGIN_ROOT is not None
     module_path = _shared.PLUGIN_ROOT / "tools" / "cloud" / f"{module_name}.py"
-    spec = importlib.util.spec_from_file_location(
-        f"cloud_{module_name}", str(module_path)
-    )
-    if spec is None or spec.loader is None:
-        return None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"cloud_{module_name}", str(module_path)
+        )
+        if spec is None or spec.loader is None:
+            logger.warning(
+                "Optional module %s not available: Could not load import spec for %s",
+                module_name,
+                module_path,
+            )
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as e:
+        logger.warning("Optional module %s not available: %s", module_name, e)
+        raise
 
 
 def _check_cloud_enabled() -> str | None:
