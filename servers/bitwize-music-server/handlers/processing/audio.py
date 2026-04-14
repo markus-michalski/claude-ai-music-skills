@@ -1892,6 +1892,487 @@ async def measure_album_signature(
     return _safe_json(response)
 
 
+async def album_coherence_check(
+    album_slug: str,
+    subfolder: str = "mastered",
+    genre: str = "",
+    anchor_track: int | None = None,
+) -> str:
+    """Check an album's mastered tracks for coherence outliers vs. the anchor.
+
+    Runs the same measurement pipeline as measure_album_signature, then
+    classifies each non-anchor track against per-genre tolerance bands:
+      • LUFS delta (±0.5 LU, correctable in MVP)
+      • STL-95 delta (±coherence_stl_95_lu, reported)
+      • LRA floor (short_term_range ≥ coherence_lra_floor_lu, reported)
+      • low-RMS delta (±coherence_low_rms_db, reported)
+      • vocal-RMS delta (±coherence_vocal_rms_db, reported)
+
+    Read-only — no files modified. Use album_coherence_correct to
+    actually re-master LUFS outliers.
+
+    Args:
+        album_slug: Album slug.
+        subfolder: Directory to scan for WAVs (default "mastered").
+        genre: Genre preset slug. Required unless anchor_track is given
+            (in which case hardcoded default tolerances are used and a
+            warning is emitted).
+        anchor_track: Optional 1-based track number override for the
+            anchor. Overrides genre-driven composite scoring + state-
+            cache frontmatter.
+
+    Returns:
+        JSON string with settings, album aggregates, anchor block,
+        per-track classifications, and summary counts.
+    """
+    dep_err = _helpers._check_mastering_deps()
+    if dep_err:
+        return _safe_json({"error": dep_err})
+
+    err, audio_dir = _helpers._resolve_audio_dir(album_slug)
+    if err:
+        return err
+    assert audio_dir is not None
+
+    if subfolder:
+        if not _is_path_confined(audio_dir, subfolder):
+            return _safe_json({
+                "error": (
+                    f"Invalid subfolder: path must not escape the album "
+                    f"directory (got {subfolder!r})"
+                ),
+            })
+        source_dir = audio_dir / subfolder
+        if not source_dir.is_dir():
+            return _safe_json({
+                "error": f"Subfolder not found: {source_dir}",
+            })
+    else:
+        source_dir = _find_wav_source_dir(audio_dir)
+
+    wav_files = sorted([
+        f for f in source_dir.iterdir()
+        if f.suffix.lower() == ".wav" and "venv" not in str(f)
+    ])
+    if not wav_files:
+        return _safe_json({"error": f"No WAV files found in {source_dir}"})
+
+    if not genre and anchor_track is None:
+        return _safe_json({
+            "error": (
+                "album_coherence_check requires either a genre (for "
+                "tolerances + anchor selection) or an explicit anchor_track "
+                "(falls back to default tolerances with a warning)."
+            ),
+        })
+
+    from tools.mastering.coherence import (
+        classify_outliers,
+        load_tolerances,
+    )
+
+    preset_dict: dict[str, Any] | None = None
+    warnings: list[str] = []
+    if genre:
+        from tools.mastering.config import build_effective_preset
+        bundle = build_effective_preset(
+            genre=genre,
+            cut_highmid_arg=0.0,
+            cut_highs_arg=0.0,
+            target_lufs_arg=-14.0,
+            ceiling_db_arg=-1.0,
+        )
+        if bundle["error"] is not None:
+            return _safe_json({
+                "error": bundle["error"]["reason"],
+                "available_genres": bundle["error"].get("available_genres", []),
+            })
+        preset_dict = bundle["preset_dict"]
+    else:
+        warnings.append(
+            "No genre supplied — using default coherence tolerances. "
+            "Pass genre= for per-genre-tuned tolerances when they become "
+            "available."
+        )
+
+    tolerances = load_tolerances(preset_dict)
+
+    override_index: int | None = None
+    if isinstance(anchor_track, int) and not isinstance(anchor_track, bool):
+        override_index = anchor_track
+    elif _shared.cache is not None:
+        state_albums = (_shared.cache.get_state() or {}).get("albums", {})
+        album_state = state_albums.get(_normalize_slug(album_slug), {})
+        raw_override = album_state.get("anchor_track")
+        if isinstance(raw_override, int) and not isinstance(raw_override, bool):
+            override_index = raw_override
+
+    from tools.mastering.analyze_tracks import analyze_track
+    from tools.mastering.album_signature import (
+        build_signature,
+        compute_anchor_deltas,
+    )
+    from tools.mastering.anchor_selector import select_anchor
+
+    loop = asyncio.get_running_loop()
+    analysis_results: list[dict[str, Any]] = []
+    for wav in wav_files:
+        result = await loop.run_in_executor(None, analyze_track, str(wav))
+        analysis_results.append(result)
+
+    signature = build_signature(analysis_results)
+
+    anchor_result = select_anchor(
+        analysis_results,
+        preset_dict or {},
+        override_index=override_index,
+    )
+
+    anchor_block: dict[str, Any] = {
+        "selected_index":  anchor_result["selected_index"],
+        "method":          anchor_result["method"],
+        "override_index":  anchor_result["override_index"],
+        "override_reason": anchor_result["override_reason"],
+        "scores":          anchor_result["scores"],
+    }
+
+    classifications: list[dict[str, Any]] = []
+    summary: dict[str, Any] = {
+        "track_count":          len(analysis_results),
+        "outlier_count":        0,
+        "correctable_count":    0,
+        "uncorrectable_count":  0,
+        "metric_breakdown": {
+            m: {"outliers": 0, "missing": 0}
+            for m in ("lufs", "stl_95", "lra_floor", "low_rms", "vocal_rms")
+        },
+    }
+
+    selected = anchor_result["selected_index"]
+    if isinstance(selected, int) and 1 <= selected <= len(analysis_results):
+        deltas = compute_anchor_deltas(analysis_results, anchor_index_1based=selected)
+        anchor_block["deltas"] = deltas
+        classifications = classify_outliers(
+            deltas, analysis_results, tolerances, anchor_index_1based=selected,
+        )
+        for cls in classifications:
+            has_lufs_correctable = any(
+                v["metric"] == "lufs" and v["severity"] == "outlier"
+                for v in cls["violations"]
+            )
+            has_non_lufs_outlier = any(
+                v["metric"] != "lufs" and v["severity"] == "outlier"
+                for v in cls["violations"]
+            )
+            if cls["is_outlier"]:
+                summary["outlier_count"] += 1
+                if has_lufs_correctable:
+                    summary["correctable_count"] += 1
+                elif has_non_lufs_outlier:
+                    summary["uncorrectable_count"] += 1
+            for v in cls["violations"]:
+                metric = v["metric"]
+                if v["severity"] == "outlier":
+                    summary["metric_breakdown"][metric]["outliers"] += 1
+                elif v["severity"] == "missing":
+                    summary["metric_breakdown"][metric]["missing"] += 1
+    else:
+        anchor_block["deltas"] = []
+        warnings.append(
+            "Anchor selector returned no eligible tracks; classifications "
+            "skipped. Check signature metrics — some tracks likely have "
+            "stl_95=None or missing band_energy."
+        )
+
+    response = {
+        "album_slug": album_slug,
+        "source_dir": str(source_dir),
+        "settings": {
+            "genre":      genre.lower() if genre else None,
+            "subfolder":  subfolder,
+            "tolerances": tolerances,
+        },
+        "album":           signature["album"],
+        "anchor":          anchor_block,
+        "classifications": classifications,
+        "summary":         summary,
+    }
+    if warnings:
+        response["warnings"] = warnings
+    return _safe_json(response)
+
+
+async def album_coherence_correct(
+    album_slug: str,
+    genre: str,
+    source_subfolder: str = "polished",
+    check_subfolder: str = "mastered",
+    target_lufs: float = -14.0,
+    ceiling_db: float = -1.0,
+    cut_highmid: float = 0.0,
+    cut_highs: float = 0.0,
+    anchor_track: int | None = None,
+    dry_run: bool = False,
+) -> str:
+    """Re-master LUFS-outlier tracks from polished/ into mastered/.
+
+    First runs the same logic as album_coherence_check to identify
+    outliers, then — for each LUFS outlier — re-runs master_track on
+    the corresponding polished/<track>.wav with target_lufs set to the
+    anchor's measured LUFS. Outputs stage into a .coherence_staging/
+    subfolder and atomically replace the originals in mastered/ on
+    full success.
+
+    Non-LUFS outliers (STL-95, LRA floor, low-RMS, vocal-RMS) are
+    reported in the response but NOT corrected in MVP — fixing those
+    requires per-track compression/EQ adjustment that this phase
+    intentionally defers.
+
+    Args:
+        album_slug: Album slug.
+        genre: Genre preset — required (tolerances + preset base).
+        source_subfolder: Directory to re-master from (default "polished").
+        check_subfolder: Directory to measure first (default "mastered").
+        target_lufs / ceiling_db / cut_highmid / cut_highs: Mastering
+            overrides — same semantics as master_album. Used only as
+            the initial preset; per-track target_lufs is overridden
+            with the anchor's measured LUFS during correction.
+        anchor_track: Optional explicit anchor.
+        dry_run: When True, build the correction plan and return it
+            without writing any files.
+
+    Returns:
+        JSON with pre-correction measurement, plan, per-track
+        correction results, post-correction re-measurement, and
+        summary. On error, returns {"error": ...}.
+    """
+    if not genre:
+        return _safe_json({
+            "error": "album_coherence_correct requires a genre for tolerance + preset resolution.",
+        })
+
+    dep_err = _helpers._check_mastering_deps()
+    if dep_err:
+        return _safe_json({"error": dep_err})
+
+    err, audio_dir = _helpers._resolve_audio_dir(album_slug)
+    if err:
+        return err
+    assert audio_dir is not None
+
+    if not _is_path_confined(audio_dir, source_subfolder) \
+            or not _is_path_confined(audio_dir, check_subfolder):
+        return _safe_json({
+            "error": "Invalid subfolder: path must not escape album directory.",
+        })
+    polished_dir = audio_dir / source_subfolder
+    mastered_dir = audio_dir / check_subfolder
+    if not polished_dir.is_dir():
+        return _safe_json({
+            "error": (
+                f"Source subfolder not found: {polished_dir}. "
+                f"Run polish_audio first, then master_album, then retry."
+            ),
+        })
+    if not mastered_dir.is_dir():
+        return _safe_json({
+            "error": f"Check subfolder not found: {mastered_dir}",
+        })
+
+    polished_names = {
+        f.name for f in polished_dir.iterdir()
+        if f.suffix.lower() == ".wav" and "venv" not in str(f)
+    }
+    mastered_names = {
+        f.name for f in mastered_dir.iterdir()
+        if f.suffix.lower() == ".wav" and "venv" not in str(f)
+    }
+    missing_in_polished = sorted(mastered_names - polished_names)
+    if missing_in_polished:
+        return _safe_json({
+            "error": (
+                f"Tracks present in {check_subfolder}/ but missing from "
+                f"{source_subfolder}/: {missing_in_polished}. Cannot re-master "
+                f"without pre-limiter source."
+            ),
+        })
+
+    pre_json = await album_coherence_check(
+        album_slug=album_slug,
+        subfolder=check_subfolder,
+        genre=genre,
+        anchor_track=anchor_track,
+    )
+    pre = json.loads(pre_json)
+    if "error" in pre:
+        return _safe_json({"error": pre["error"], **pre})
+
+    from tools.mastering.coherence import build_correction_plan
+    classifications = pre["classifications"]
+    anchor_idx = pre["anchor"]["selected_index"]
+    if anchor_idx is None:
+        return _safe_json({
+            "error": "Anchor selector returned no eligible tracks — cannot correct.",
+            "pre_correction": pre,
+        })
+
+    from tools.mastering.analyze_tracks import analyze_track
+    loop = asyncio.get_running_loop()
+    mastered_wavs = sorted([
+        f for f in mastered_dir.iterdir()
+        if f.suffix.lower() == ".wav" and "venv" not in str(f)
+    ])
+    pre_analysis: list[dict[str, Any]] = []
+    for wav in mastered_wavs:
+        result = await loop.run_in_executor(None, analyze_track, str(wav))
+        pre_analysis.append(result)
+
+    plan = build_correction_plan(
+        classifications, pre_analysis, anchor_index_1based=anchor_idx,
+    )
+
+    response: dict[str, Any] = {
+        "album_slug": album_slug,
+        "dry_run":    dry_run,
+        "settings": {
+            "genre":             genre,
+            "source_subfolder":  source_subfolder,
+            "check_subfolder":   check_subfolder,
+        },
+        "pre_correction": pre,
+        "plan":           plan,
+        "corrections":    [],
+    }
+
+    if dry_run:
+        response["summary"] = {
+            "corrected":       0,
+            "skipped":         len(plan["skipped"]),
+            "failed":          0,
+            "anchor_lufs":     plan["anchor_lufs"],
+            "outliers_before": pre["summary"]["outlier_count"],
+            "outliers_after":  pre["summary"]["outlier_count"],
+        }
+        return _safe_json(response)
+
+    from tools.mastering.config import build_effective_preset
+    from tools.mastering.master_tracks import master_track
+
+    import soundfile as _sf
+    try:
+        source_sample_rate = int(_sf.info(str(mastered_wavs[0])).samplerate)
+    except Exception:
+        source_sample_rate = None
+
+    bundle = build_effective_preset(
+        genre=genre,
+        cut_highmid_arg=cut_highmid,
+        cut_highs_arg=cut_highs,
+        target_lufs_arg=target_lufs,
+        ceiling_db_arg=ceiling_db,
+        source_sample_rate=source_sample_rate,
+    )
+    if bundle["error"] is not None:
+        return _safe_json({
+            "error": bundle["error"]["reason"],
+            "available_genres": bundle["error"].get("available_genres", []),
+        })
+    effective_preset = bundle["effective_preset"]
+
+    staging_dir = mastered_dir.parent / ".coherence_staging"
+    staging_dir.mkdir(exist_ok=True)
+
+    failed = 0
+    try:
+        for entry in plan["corrections"]:
+            if not entry["correctable"]:
+                continue
+            filename = entry["filename"]
+            src = polished_dir / filename
+            if not src.is_file():
+                response["corrections"].append({
+                    "filename":           filename,
+                    "status":             "failed",
+                    "failure_reason":     f"Polished source missing: {src}",
+                    "applied_target_lufs": entry["corrected_target_lufs"],
+                })
+                failed += 1
+                continue
+            modified_preset = dict(effective_preset)
+            modified_preset["target_lufs"] = entry["corrected_target_lufs"]
+            staged = staging_dir / filename
+            try:
+                from functools import partial
+                await loop.run_in_executor(
+                    None,
+                    partial(master_track, src, staged, preset=modified_preset),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                response["corrections"].append({
+                    "filename":           filename,
+                    "status":             "failed",
+                    "failure_reason":     f"master_track raised: {exc}",
+                    "applied_target_lufs": entry["corrected_target_lufs"],
+                })
+                failed += 1
+                continue
+
+            staged_result = await loop.run_in_executor(
+                None, analyze_track, str(staged),
+            )
+            delta = staged_result["lufs"] - plan["anchor_lufs"]
+            response["corrections"].append({
+                "filename":             filename,
+                "original_lufs":        next(
+                    (t["lufs"] for t in pre_analysis if t["filename"] == filename),
+                    None,
+                ),
+                "applied_target_lufs":  entry["corrected_target_lufs"],
+                "result_lufs":          staged_result["lufs"],
+                "status":               "ok",
+                "delta_from_anchor":    delta,
+                "within_tolerance":     abs(delta) <= 0.5,
+            })
+
+        if failed == 0 and response["corrections"]:
+            for entry in response["corrections"]:
+                if entry["status"] != "ok":
+                    continue
+                staged = staging_dir / entry["filename"]
+                final = mastered_dir / entry["filename"]
+                staged.replace(final)
+    finally:
+        for f in staging_dir.iterdir():
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        try:
+            staging_dir.rmdir()
+        except OSError:
+            pass
+
+    post_json = await album_coherence_check(
+        album_slug=album_slug,
+        subfolder=check_subfolder,
+        genre=genre,
+        anchor_track=anchor_track,
+    )
+    post = json.loads(post_json)
+    response["post_correction"] = post
+
+    response["summary"] = {
+        "corrected":       sum(1 for c in response["corrections"] if c["status"] == "ok"),
+        "skipped":         len(plan["skipped"])
+                          + sum(1 for c in plan["corrections"] if not c["correctable"]),
+        "failed":          failed,
+        "anchor_lufs":     plan["anchor_lufs"],
+        "outliers_before": pre["summary"]["outlier_count"],
+        "outliers_after":  post.get("summary", {}).get("outlier_count", -1),
+    }
+    return _safe_json(response)
+
+
 def register(mcp: Any) -> None:
     """Register audio mastering tools."""
     mcp.tool()(analyze_audio)
@@ -1904,3 +2385,5 @@ def register(mcp: Any) -> None:
     mcp.tool()(mono_fold_check)
     mcp.tool()(prune_archival)
     mcp.tool()(measure_album_signature)
+    mcp.tool()(album_coherence_check)
+    mcp.tool()(album_coherence_correct)
