@@ -142,6 +142,7 @@ def test_master_album_no_upsampling_notice_when_rates_match(
     three_track_audio_dir: Path,
 ) -> None:
     """delivery_sample_rate=44100 → no upsampling notice."""
+    from tools.mastering import config as mastering_config_mod
     from tools.mastering.config import DEFAULT_MASTERING_CONFIG
 
     custom = {**DEFAULT_MASTERING_CONFIG, "delivery_sample_rate": 44100}
@@ -151,7 +152,7 @@ def test_master_album_no_upsampling_notice_when_rates_match(
 
     with patch.object(processing_helpers, "_resolve_audio_dir", _fake_resolve), \
          patch.object(shared_mod, "cache", _MockCache()), \
-         patch.object(audio_mod, "load_mastering_config", return_value=custom):
+         patch.object(mastering_config_mod, "load_mastering_config", return_value=custom):
         result_json = asyncio.run(audio_mod.master_album("test-album"))
 
     result = json.loads(result_json)
@@ -166,3 +167,97 @@ def test_master_album_no_upsampling_notice_when_rates_match(
     mastered = three_track_audio_dir / "mastered" / "01-track.wav"
     info = sf.info(str(mastered))
     assert info.samplerate == 44100
+
+
+@pytest.fixture
+def two_track_long_audio_dir(tmp_path: Path) -> Path:
+    """Two 30s stereo WAVs — long enough for analyze_track to produce
+    signature metrics (STL-95 needs ≥20 short-term windows ≈ 23s).
+
+    The two tracks differ in peak level and tonal center so the anchor
+    selector has something meaningful to score.
+    """
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    sr = 44100
+    duration = 30.0
+    t = np.linspace(0, duration, int(sr * duration), endpoint=False)
+    # Track 1: lower-peak, 440 Hz — moderate peak, pop-ish
+    tone1 = 0.3 * np.sin(2 * np.pi * 440.0 * t)
+    sf.write(str(audio_dir / "01-track.wav"),
+             np.column_stack([tone1, tone1]), sr, subtype="PCM_16")
+    # Track 2: hotter-peak, 660 Hz — closer to ceiling
+    tone2 = 0.7 * np.sin(2 * np.pi * 660.0 * t)
+    sf.write(str(audio_dir / "02-track.wav"),
+             np.column_stack([tone2, tone2]), sr, subtype="PCM_16")
+    return audio_dir
+
+
+def test_master_album_records_anchor_selection_stage(
+    two_track_long_audio_dir: Path,
+) -> None:
+    """#290 phase 2: master_album runs anchor selector after analysis."""
+
+    def _fake_resolve(slug: str, *_: object, **__: object) -> tuple[str | None, Path]:
+        return None, two_track_long_audio_dir
+
+    with patch.object(processing_helpers, "_resolve_audio_dir", _fake_resolve), \
+         patch.object(shared_mod, "cache", _MockCache()):
+        result_json = asyncio.run(
+            audio_mod.master_album("test-album", genre="pop")
+        )
+
+    result = json.loads(result_json)
+    stages = result["stages"]
+    assert "anchor_selection" in stages
+    anchor = stages["anchor_selection"]
+    assert anchor["status"] in ("pass", "warn")
+    selected = anchor["selected_index"]
+    assert selected is None or 1 <= selected <= 2
+    assert anchor["method"] in (
+        "composite", "tie_breaker", "override", "no_eligible_tracks"
+    )
+    assert "scores" in anchor
+    assert isinstance(anchor["scores"], list)
+    assert len(anchor["scores"]) == 2
+
+
+def test_master_album_honors_anchor_track_override(
+    two_track_long_audio_dir: Path,
+) -> None:
+    """#290 phase 2: anchor_track frontmatter overrides composite scoring.
+
+    Exercises the full override chain: state cache albums[slug].anchor_track
+    → handler reads it via _shared.cache.get_state() → passes override_index
+    to select_anchor → anchor_selection stage records method=="override".
+    This is the end-to-end regression test for review finding C1.
+    """
+
+    def _fake_resolve(slug: str, *_: object, **__: object) -> tuple[str | None, Path]:
+        return None, two_track_long_audio_dir
+
+    # Pre-populate the mock state cache exactly as the indexer would
+    # after parsing a README with `anchor_track: 2` in frontmatter.
+    mock_cache = _MockCache()
+    mock_cache._state = {
+        "albums": {
+            "test-album": {
+                "anchor_track": 2,
+                "tracks": {},
+            },
+        },
+    }
+
+    with patch.object(processing_helpers, "_resolve_audio_dir", _fake_resolve), \
+         patch.object(shared_mod, "cache", mock_cache):
+        result_json = asyncio.run(
+            audio_mod.master_album("test-album", genre="pop")
+        )
+
+    result = json.loads(result_json)
+    assert result.get("failed_stage") is None, result
+    anchor = result["stages"]["anchor_selection"]
+    assert anchor["method"] == "override"
+    assert anchor["selected_index"] == 2
+    assert anchor["override_index"] == 2
+    assert anchor["override_reason"] is None
