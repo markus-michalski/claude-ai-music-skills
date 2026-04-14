@@ -21,8 +21,16 @@ from handlers._shared import (
     _normalize_slug,
     # _resolve_audio_dir accessed via _helpers for patch compatibility
     _safe_json,
+    get_plugin_version as _read_plugin_version,
 )
 from handlers.processing import _helpers
+from tools.mastering.album_signature import build_signature
+from tools.mastering.signature_persistence import (
+    SIGNATURE_FILENAME,
+    SignaturePersistenceError,
+    read_signature_file,
+    write_signature_file,
+)
 
 logger = logging.getLogger("bitwize-music-state")
 
@@ -563,6 +571,8 @@ async def master_album(
     cut_highmid: float = 0.0,
     cut_highs: float = 0.0,
     source_subfolder: str = "",
+    freeze_signature: bool = False,
+    new_anchor: bool = False,
 ) -> str:
     """End-to-end mastering pipeline: analyze, QC, master, verify, update status.
 
@@ -584,6 +594,14 @@ async def master_album(
         cut_highs: High shelf cut in dB at 8kHz
         source_subfolder: Read WAV files from this subfolder instead of the
             base audio dir (e.g., "polished" to master from mix-engineer output)
+        freeze_signature: Force frozen-signature mode regardless of album
+            status. Skips anchor selection and masters against
+            ``ALBUM_SIGNATURE.yaml``. Useful for bonus tracks during
+            release prep. Mutually exclusive with ``new_anchor``.
+        new_anchor: Force fresh anchor selection regardless of album
+            status. Useful for remastering a Released album with a new
+            anchor (e.g. re-release). Mutually exclusive with
+            ``freeze_signature``.
 
     Returns:
         JSON with per-stage results, settings, warnings, and failure info
@@ -593,6 +611,20 @@ async def master_album(
 
     stages: dict[str, Any] = {}
     warnings: list[Any] = []
+
+    if freeze_signature and new_anchor:
+        return _safe_json({
+            "album_slug": album_slug,
+            "stage_reached": "pre_flight",
+            "stages": {"pre_flight": {
+                "status": "fail",
+                "detail": "freeze_signature and new_anchor are mutually exclusive",
+            }},
+            "failed_stage": "pre_flight",
+            "failure_detail": {
+                "reason": "freeze_signature and new_anchor are mutually exclusive",
+            },
+        })
 
     # --- Stage 1: Pre-flight ---
     dep_err = _helpers._check_mastering_deps()
@@ -746,46 +778,197 @@ async def master_album(
         "tinny_tracks": tinny_tracks,
     }
 
-    # --- Stage 2b: Anchor selection (#290 phase 2) ---
-    from tools.mastering.anchor_selector import select_anchor
+    # --- Stage 2a: Freeze decision (#290 phase 4) ---
+    frozen_signature: dict[str, Any] | None = None
+    freeze_reason: str
+    if freeze_signature:
+        freeze_mode = "frozen"
+        freeze_reason = "freeze_signature_override"
+    elif new_anchor:
+        freeze_mode = "fresh"
+        freeze_reason = "new_anchor_override"
+    elif _shared.is_album_released(album_slug):
+        freeze_mode = "frozen"
+        freeze_reason = "album_released"
+    else:
+        freeze_mode = "fresh"
+        freeze_reason = "default"
 
-    # Read anchor_track override from state cache (parse_album_readme
-    # surfaces it as an int or None).
-    anchor_override: int | None = None
-    state_albums = (_shared.cache.get_state() or {}).get("albums", {})
-    album_state = state_albums.get(_normalize_slug(album_slug), {})
-    raw_override = album_state.get("anchor_track")
-    if isinstance(raw_override, int) and not isinstance(raw_override, bool):
-        anchor_override = raw_override
+    if freeze_mode == "frozen":
+        try:
+            frozen_signature = read_signature_file(audio_dir)
+        except SignaturePersistenceError as exc:
+            reason_text = f"Corrupt {SIGNATURE_FILENAME}: {exc}"
+            return _safe_json({
+                "album_slug": album_slug,
+                "stage_reached": "freeze_decision",
+                "stages": {**stages, "freeze_decision": {
+                    "status": "fail",
+                    "mode": freeze_mode,
+                    "reason": reason_text,
+                }},
+                "failed_stage": "freeze_decision",
+                "failure_detail": {"reason": reason_text},
+            })
+        if frozen_signature is None:
+            if freeze_signature:
+                reason_text = (
+                    f"freeze_signature requested but {SIGNATURE_FILENAME} is absent "
+                    f"in {audio_dir}"
+                )
+            else:
+                reason_text = (
+                    f"Album is Released but {SIGNATURE_FILENAME} is absent in "
+                    f"{audio_dir}. Halt + escalate — cannot safely re-master without "
+                    f"a frozen signature."
+                )
+            return _safe_json({
+                "album_slug": album_slug,
+                "stage_reached": "freeze_decision",
+                "stages": {**stages, "freeze_decision": {
+                    "status": "fail",
+                    "mode": freeze_mode,
+                    "reason": reason_text,
+                }},
+                "failed_stage": "freeze_decision",
+                "failure_detail": {"reason": reason_text},
+            })
 
-    # Build anchor preset. load_genre_presets() filters through
-    # _PRESET_DEFAULTS, so nested-dict defaults (spectral_reference_energy)
-    # don't inherit into per-genre presets. select_anchor carries its own
-    # pop-balanced defaults for `genre_ideal_lra_lu` and
-    # `spectral_reference_energy` when the preset omits them.
-    anchor_preset = preset_dict or {}
-
-    anchor_result = select_anchor(
-        analysis_results,
-        anchor_preset,
-        override_index=anchor_override,
-    )
-
-    # Phase 2 records the result but does not yet re-order the mastering
-    # loop — coherence correction lands in a later phase.
-    stages["anchor_selection"] = {
-        "status": "pass" if anchor_result["selected_index"] is not None else "warn",
-        "selected_index": anchor_result["selected_index"],
-        "method": anchor_result["method"],
-        "override_index": anchor_result["override_index"],
-        "override_reason": anchor_result["override_reason"],
-        "scores": anchor_result["scores"],
+    stages["freeze_decision"] = {
+        "status": "pass",
+        "mode":   freeze_mode,
+        "reason": freeze_reason,
     }
-    if anchor_result["selected_index"] is None:
-        warnings.append(
-            "Anchor selector: no eligible tracks (signature metrics missing). "
-            "Mastering proceeds without an anchor; coherence correction disabled."
+
+    # --- Stage 2b: Anchor selection (#290 phase 2 / routed by 2a in phase 4) ---
+    if frozen_signature is not None:
+        # Frozen mode: reuse persisted anchor + targets; no scoring.
+        frozen_anchor = frozen_signature.get("anchor") or {}
+        frozen_targets = frozen_signature.get("delivery_targets") or {}
+
+        anchor_result: dict[str, Any] = {
+            "selected_index":  frozen_anchor.get("index"),
+            "method":          "frozen_signature",
+            "override_index":  None,
+            "override_reason": None,
+            "scores":          [],
+        }
+        stages["anchor_selection"] = {
+            "status":          "pass" if anchor_result["selected_index"] is not None else "warn",
+            "selected_index":  anchor_result["selected_index"],
+            "method":          "frozen_signature",
+            "override_index":  None,
+            "override_reason": None,
+            "scores":          [],
+            "frozen_from":     frozen_anchor.get("filename"),
+        }
+
+        # Override the `targets` dict for downstream mastering so the
+        # run delivers at the same loudness/ceiling as the shipped
+        # signature. Falls back to the current targets when the frozen
+        # file omits a key (forward-compat).
+        for k, sig_key in (
+            ("target_lufs",        "target_lufs"),
+            ("ceiling_db",         "tp_ceiling_db"),
+            ("output_bits",        "output_bits"),
+            ("output_sample_rate", "output_sample_rate"),
+        ):
+            val = frozen_targets.get(sig_key)
+            if val is not None:
+                targets[k] = val
+
+        # I2: recompute upsampled_from_source after sample-rate mutation.
+        _src_sr = targets.get("source_sample_rate")
+        _out_sr = targets.get("output_sample_rate")
+        if _src_sr is not None and _out_sr is not None:
+            targets["upsampled_from_source"] = _out_sr > _src_sr
+
+        # Rebuild `settings` so the JSON response reflects the frozen
+        # targets (settings is already emitted in earlier stages' output).
+        settings["target_lufs"] = targets.get("target_lufs")
+        settings["ceiling_db"]  = targets.get("ceiling_db")
+        settings["output_bits"] = targets.get("output_bits")
+        settings["output_sample_rate"] = targets.get("output_sample_rate")
+        settings["upsampled_from_source"] = targets.get("upsampled_from_source")
+
+        # C1: Refresh effective_preset in-place with frozen delivery-target
+        # fields so Stage 4's mastering loop and _master_track receive the
+        # frozen values, not the genre defaults cached at Stage 1.
+        _frozen_preset_overrides: dict[str, Any] = {}
+        _lufs_override = frozen_targets.get("target_lufs")
+        if _lufs_override is not None:
+            _frozen_preset_overrides["target_lufs"] = _lufs_override
+        _ceil_override = frozen_targets.get("tp_ceiling_db")
+        if _ceil_override is not None:
+            _frozen_preset_overrides["ceiling_db"] = _ceil_override
+        _bits_override = frozen_targets.get("output_bits")
+        if _bits_override is not None:
+            _frozen_preset_overrides["output_bits"] = _bits_override
+        _sr_override = frozen_targets.get("output_sample_rate")
+        if _sr_override is not None:
+            _frozen_preset_overrides["output_sample_rate"] = _sr_override
+        _lra_override = frozen_targets.get("lra_target_lu")
+        if _lra_override is not None:
+            _frozen_preset_overrides["genre_ideal_lra_lu"] = _lra_override
+        effective_preset.update(_frozen_preset_overrides)
+
+        # I1: Also propagate frozen tolerance fields into effective_preset.
+        for _tol_key in (
+            "coherence_stl_95_lu",
+            "coherence_lra_floor_lu",
+            "coherence_low_rms_db",
+            "coherence_vocal_rms_db",
+        ):
+            _tol_val = frozen_signature.get("tolerances", {}).get(_tol_key)
+            if _tol_val is not None:
+                effective_preset[_tol_key] = _tol_val
+
+        # C1: Reassign cached effective_* locals from updated targets/preset
+        # so all downstream code (Stage 4 mastering loop, Stage 5 verification)
+        # operates on the frozen values.
+        effective_lufs = targets["target_lufs"]
+        effective_ceiling = targets["ceiling_db"]
+        effective_compress = effective_preset.get("compress_ratio", effective_compress)
+    else:
+        from tools.mastering.anchor_selector import select_anchor
+
+        # Read anchor_track override from state cache (parse_album_readme
+        # surfaces it as an int or None).
+        anchor_override: int | None = None
+        state_albums = (_shared.cache.get_state() or {}).get("albums", {})
+        album_state = state_albums.get(_normalize_slug(album_slug), {})
+        raw_override = album_state.get("anchor_track")
+        if isinstance(raw_override, int) and not isinstance(raw_override, bool):
+            anchor_override = raw_override
+
+        # Build anchor preset. load_genre_presets() filters through
+        # _PRESET_DEFAULTS, so nested-dict defaults (spectral_reference_energy)
+        # don't inherit into per-genre presets. select_anchor carries its own
+        # pop-balanced defaults for `genre_ideal_lra_lu` and
+        # `spectral_reference_energy` when the preset omits them.
+        anchor_preset = preset_dict or {}
+
+        anchor_result = select_anchor(
+            analysis_results,
+            anchor_preset,
+            override_index=anchor_override,
         )
+
+        # Phase 2 records the result but does not yet re-order the mastering
+        # loop — coherence correction lands in a later phase.
+        stages["anchor_selection"] = {
+            "status": "pass" if anchor_result["selected_index"] is not None else "warn",
+            "selected_index": anchor_result["selected_index"],
+            "method": anchor_result["method"],
+            "override_index": anchor_result["override_index"],
+            "override_reason": anchor_result["override_reason"],
+            "scores": anchor_result["scores"],
+        }
+        if anchor_result["selected_index"] is None:
+            warnings.append(
+                "Anchor selector: no eligible tracks (signature metrics missing). "
+                "Mastering proceeds without an anchor; coherence correction disabled."
+            )
 
     # --- Stage 3: Pre-QC ---
     # Skip `truepeak` and `clicks` on the raw/polished input:
@@ -1326,11 +1509,20 @@ async def master_album(
     # of each mastered track to archival/. This is a bit-depth-expanded
     # copy of the delivery master (not a separate render), intended for
     # re-mastering without re-polishing stems.
+    #
+    # The archival dir is a MIRROR of mastered/: orphans (files whose
+    # basename is no longer in mastered/) are removed before the new
+    # float copies go down. Keeps re-mastered albums in sync when tracks
+    # are dropped or renamed (#290 phase 4 — PR #304 review item A5).
     if targets.get("archival_enabled"):
         import soundfile as _sf_archival
+        from tools.mastering.archival import prune_archival_orphans
 
         archival_dir = audio_dir / "archival"
         archival_dir.mkdir(exist_ok=True)
+        mastered_names = {p.name for p in mastered_files}
+        pruned = prune_archival_orphans(archival_dir, mastered_names)
+
         archived = 0
         archive_errors: list[str] = []
         for mastered_path in mastered_files:
@@ -1345,6 +1537,7 @@ async def master_album(
         stages["archival"] = {
             "status": "pass" if not archive_errors else "warn",
             "count": archived,
+            "pruned": pruned or None,
             "output_dir": str(archival_dir),
             "errors": archive_errors or None,
         }
@@ -1453,6 +1646,155 @@ async def master_album(
         "album_status": album_status,
         "errors": status_errors if status_errors else None,
     }
+
+    # --- Stage 7.5: Persist ALBUM_SIGNATURE.yaml (#290 phase 4) ---
+    # Build from the same analysis_results used for anchor selection so
+    # the signature reflects pre-master state of the shipped tracks
+    # (inputs to mastering, not the mastered output).
+    #
+    # In frozen mode the original anchor block is preserved verbatim so
+    # re-writes keep method/score from what shipped rather than overwriting
+    # with "frozen_signature". album_median + pipeline still refresh so
+    # added/regenerated tracks get surfaced in the aggregates.
+    try:
+        _plugin_version = _read_plugin_version()
+
+        # In frozen mode, prefer tolerances + lra_target_lu from the
+        # frozen signature to prevent drift (preset_dict holds the
+        # current genre preset, not the shipped values).
+        if frozen_signature is not None:
+            _frozen_targets = frozen_signature.get("delivery_targets") or {}
+            _frozen_tolerances = frozen_signature.get("tolerances") or {}
+            _lra_target_lu = _frozen_targets.get("lra_target_lu")
+            if _lra_target_lu is None:
+                _lra_target_lu = preset_dict.get("genre_ideal_lra_lu") if preset_dict else None
+            _tolerances = {
+                k: _frozen_tolerances.get(k)
+                for k in (
+                    "coherence_stl_95_lu",
+                    "coherence_lra_floor_lu",
+                    "coherence_low_rms_db",
+                    "coherence_vocal_rms_db",
+                )
+                if _frozen_tolerances.get(k) is not None
+            }
+            # If frozen file omits tolerances entirely, fall back to preset_dict.
+            if not _tolerances:
+                _tolerances = {
+                    k: preset_dict.get(k)
+                    for k in (
+                        "coherence_stl_95_lu",
+                        "coherence_lra_floor_lu",
+                        "coherence_low_rms_db",
+                        "coherence_vocal_rms_db",
+                    )
+                    if preset_dict is not None and preset_dict.get(k) is not None
+                }
+        else:
+            _lra_target_lu = preset_dict.get("genre_ideal_lra_lu") if preset_dict else None
+            _tolerances = {
+                k: preset_dict.get(k)
+                for k in (
+                    "coherence_stl_95_lu",
+                    "coherence_lra_floor_lu",
+                    "coherence_low_rms_db",
+                    "coherence_vocal_rms_db",
+                )
+                if preset_dict is not None and preset_dict.get(k) is not None
+            }
+
+        sig = build_signature(
+            analysis_results,
+            delivery_targets={
+                "target_lufs":        targets.get("target_lufs"),
+                "tp_ceiling_db":      targets.get("ceiling_db"),
+                "lra_target_lu":      _lra_target_lu,
+                "output_bits":        targets.get("output_bits"),
+                "output_sample_rate": targets.get("output_sample_rate"),
+            },
+            tolerances=_tolerances,
+        )
+        anchor_idx = anchor_result.get("selected_index")
+        anchor_track_sig: dict[str, Any] | None = None
+        anchor_filename: str | None = None
+        if anchor_idx is not None and 1 <= anchor_idx <= len(sig["tracks"]):
+            row = sig["tracks"][anchor_idx - 1]
+            anchor_filename = row.get("filename")
+            anchor_track_sig = {
+                k: row.get(k)
+                for k in ("stl_95", "low_rms", "vocal_rms",
+                          "short_term_range", "lufs", "peak_db")
+            }
+
+        if frozen_signature is not None:
+            # Frozen mode: preserve the anchor block from the shipped
+            # signature verbatim. album_median + pipeline still refresh
+            # so added/regenerated tracks get surfaced in the aggregates.
+            frozen_anchor_block = frozen_signature.get("anchor") or {}
+            payload: dict[str, Any] = {
+                "album_slug":       album_slug,
+                "anchor":           dict(frozen_anchor_block),
+                "album_median":     sig["album"]["median"],
+                "delivery_targets": sig["album"].get("delivery_targets", {}),
+                "tolerances":       sig["album"].get("tolerances", {}),
+                "pipeline": {
+                    "polish_subfolder":       source_subfolder or None,
+                    "source_sample_rate":     targets.get("source_sample_rate"),
+                    "upsampled_from_source":  bool(targets.get("upsampled_from_source")),
+                },
+            }
+        else:
+            payload = {
+                "album_slug":       album_slug,
+                "anchor": {
+                    "index":           anchor_idx,
+                    "filename":        anchor_filename,
+                    "method":          anchor_result.get("method"),
+                    "score":           None,  # filled below when composite
+                    "signature":       anchor_track_sig,
+                },
+                "album_median":     sig["album"]["median"],
+                "delivery_targets": sig["album"].get("delivery_targets", {}),
+                "tolerances":       sig["album"].get("tolerances", {}),
+                "pipeline": {
+                    "polish_subfolder":       source_subfolder or None,
+                    "source_sample_rate":     targets.get("source_sample_rate"),
+                    "upsampled_from_source":  bool(targets.get("upsampled_from_source")),
+                },
+            }
+            # Carry the composite score when the anchor was chosen by scoring.
+            if anchor_idx is not None:
+                for s in anchor_result.get("scores", []) or []:
+                    if s.get("index") == anchor_idx:
+                        payload["anchor"]["score"] = s.get("score")
+                        break
+
+        # yaml.safe_dump cannot represent numpy scalars — round-trip through
+        # JSON (which already uses float for numpy floats via json default) to
+        # produce a plain-Python dict before handing off to signature_persistence.
+        def _coerce_numeric(v: Any) -> Any:
+            if hasattr(v, "item"):
+                return v.item()
+            raise TypeError(
+                f"signature payload contains unserializable {type(v).__name__}: {v!r}"
+            )
+
+        payload = json.loads(json.dumps(payload, default=_coerce_numeric))
+
+        sig_path = write_signature_file(
+            audio_dir, payload, plugin_version=_plugin_version,
+        )
+        stages["signature_persist"] = {
+            "status": "pass",
+            "path":   str(sig_path),
+        }
+    except (SignaturePersistenceError, OSError, TypeError) as exc:
+        # Non-fatal: mastering already succeeded, just couldn't persist.
+        warnings.append(f"Signature persist: {exc}")
+        stages["signature_persist"] = {
+            "status": "warn",
+            "error":  str(exc),
+        }
 
     # Build runtime notices (caveats worth surfacing to the user).
     notices: list[str] = []

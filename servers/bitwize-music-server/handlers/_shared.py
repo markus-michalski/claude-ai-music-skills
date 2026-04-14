@@ -452,6 +452,59 @@ _STREAMING_PLACEHOLDER_MARKERS = [
 _CODE_BLOCK_SECTIONS = frozenset({"Style Box", "Exclude Styles", "Lyrics Box", "Streaming Lyrics", "Original Quote"})
 
 
+def get_plugin_version() -> str:
+    """Return the plugin version string from .claude-plugin/plugin.json.
+
+    Reads ``PLUGIN_ROOT / ".claude-plugin" / "plugin.json"`` and returns the
+    ``version`` field as a string.  Returns ``"unknown"`` on any failure
+    (PLUGIN_ROOT is None, file missing, JSON malformed, field absent).
+
+    This is intentionally a simple helper — use it wherever a plain version
+    string is needed.  For the full stored-vs-current comparison tool, see
+    ``handlers.health.get_plugin_version`` (the async MCP tool).
+    """
+    if PLUGIN_ROOT is None:
+        return "unknown"
+    manifest = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        return str(data.get("version", "unknown"))
+    except (OSError, json.JSONDecodeError):
+        return "unknown"
+
+
+def is_album_released(album_slug: str) -> bool:
+    """Return True when the album's cached status is ``Released``.
+
+    Consumed by ``master_album``'s freeze-decision stage — frozen mode
+    is the default for Released albums so re-mastering never drifts
+    from what shipped.
+
+    Safe to call before the cache is fully initialized (returns ``False``
+    for any lookup that can't resolve — missing cache, invalid slug,
+    corrupt state, missing album, or any non-"Released" status).
+    """
+    if cache is None:
+        return False
+    try:
+        normalized = _normalize_slug(album_slug)
+    except ValueError:
+        # Invalid slug (path separators, null bytes, traversal) can't
+        # match any album. Safe default.
+        return False
+    try:
+        state = cache.get_state()
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    if not state:
+        return False
+    albums = state.get("albums", {})
+    entry = albums.get(normalized)
+    if not isinstance(entry, dict):
+        return False
+    return entry.get("status") == ALBUM_RELEASED
+
+
 def _find_wav_source_dir(audio_dir: Path) -> Path:
     """Return originals/ if it exists, else album root (legacy fallback)."""
     originals = audio_dir / "originals"
