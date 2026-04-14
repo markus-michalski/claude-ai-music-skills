@@ -25,8 +25,78 @@ from tools.shared.progress import ProgressBar
 
 logger = logging.getLogger(__name__)
 
-def analyze_track(filepath: Path | str) -> dict[str, Any]:
-    """Analyze a single track and return metrics."""
+
+def _bandpass_sos(data: np.ndarray, rate: int, low_hz: float, high_hz: float,
+                  order: int = 4) -> np.ndarray:
+    """Zero-phase Butterworth bandpass via SOS form (numerically stable)."""
+    nyquist = rate / 2
+    low = max(low_hz, 1.0) / nyquist
+    high = min(high_hz, nyquist - 1.0) / nyquist
+    sos = signal.butter(order, [low, high], btype='bandpass', output='sos')
+    return signal.sosfiltfilt(sos, data)
+
+
+def _rms_db(samples: np.ndarray) -> float:
+    rms = float(np.sqrt(np.mean(samples ** 2)))
+    return 20.0 * np.log10(rms) if rms > 0 else float('-inf')
+
+
+def _read_vocal_stem(stem_path: Path | str, target_rate: int) -> np.ndarray | None:
+    """Read a vocal stem, mono-mix, resample to target_rate.
+
+    Returns None if the file cannot be read or resampled.
+    """
+    try:
+        data, rate = sf.read(str(stem_path))
+    except Exception as exc:
+        logger.warning("Could not read vocal stem %s: %s", stem_path, exc)
+        return None
+    if data.ndim > 1:
+        mono = np.mean(data, axis=1)
+    else:
+        mono = data
+    if rate != target_rate:
+        try:
+            from math import gcd
+            g = gcd(int(rate), int(target_rate))
+            up = int(target_rate) // g
+            down = int(rate) // g
+            mono = signal.resample_poly(mono, up, down)
+        except Exception as exc:
+            logger.warning("Could not resample vocal stem %s: %s", stem_path, exc)
+            return None
+    return np.asarray(mono, dtype=np.float64)
+
+
+def _auto_resolve_vocal_stem(input_path: Path) -> Path | None:
+    """Find a matching polished vocal stem without explicit kwarg.
+
+    Checks, in order:
+      1. <input_dir>/polished/<input_stem>/vocals.wav  (album-root input)
+      2. <input_dir>/../polished/<input_stem>/vocals.wav  (mastered/ or
+         polished/ subfolder input)
+
+    Returns the first existing path, or None.
+    """
+    stem_name = input_path.stem
+    candidates = [
+        input_path.parent / "polished" / stem_name / "vocals.wav",
+        input_path.parent.parent / "polished" / stem_name / "vocals.wav",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def analyze_track(filepath: Path | str, *,
+                  vocal_stem_path: Path | str | None = None) -> dict[str, Any]:
+    """Analyze a single track and return metrics.
+
+    Optional vocal_stem_path lets Phase 2 callers feed a known stem path
+    directly; omitted calls auto-resolve via the polished/<name>/vocals.wav
+    sibling convention (added in later tasks).
+    """
     data, rate = sf.read(filepath)
 
     # Handle mono
@@ -82,6 +152,7 @@ def analyze_track(filepath: Path | str) -> dict[str, Any]:
     max_short_term = float('-inf')
     min_short_term = float('inf')
     max_momentary = float('-inf')
+    st_values: list[float] = []
 
     # Short-term: 3s window, 1s hop (EBU R128)
     st_window = int(3.0 * rate)
@@ -91,8 +162,70 @@ def analyze_track(filepath: Path | str) -> dict[str, Any]:
             chunk = data[start:start + st_window]
             st_lufs = pyln.Meter(rate).integrated_loudness(chunk)
             if np.isfinite(st_lufs):
+                st_values.append(float(st_lufs))
                 max_short_term = max(max_short_term, st_lufs)
                 min_short_term = min(min_short_term, st_lufs)
+
+    # STL-95: 95th percentile of finite short-term LUFS. Gated to ≥20 windows
+    # (~23s audio) so the percentile has a meaningful spread; below that it
+    # collapses to near-max. Top-5% indices retained for downstream low-RMS.
+    stl_95: float | None
+    stl_top_5pct_indices: np.ndarray
+    if len(st_values) >= 20:
+        stl_array = np.asarray(st_values, dtype=np.float64)
+        stl_95 = float(np.percentile(stl_array, 95))
+        top_k = max(1, int(round(0.05 * len(st_values))))
+        order = np.argsort(-stl_array, kind='stable')
+        stl_top_5pct_indices = order[:top_k]
+    else:
+        stl_95 = None
+        stl_top_5pct_indices = np.array([], dtype=np.int64)
+
+    # low-RMS: 20-200 Hz band, measured within top-5% STL windows only.
+    # Whole-track measurement false-alarms on arrangements with quiet verses
+    # and wall-of-bass choruses (see #290 spec footnote †).
+    low_rms: float | None
+    if stl_95 is not None and len(stl_top_5pct_indices) > 0:
+        low_filtered = _bandpass_sos(mono, rate, 20.0, 200.0)
+        window_rms_values: list[float] = []
+        for window_idx in stl_top_5pct_indices:
+            start = int(window_idx) * st_hop
+            end = start + st_window
+            chunk = low_filtered[start:end]
+            rms_val = _rms_db(chunk)
+            if np.isfinite(rms_val):
+                window_rms_values.append(rms_val)
+        low_rms = float(np.median(window_rms_values)) if window_rms_values else None
+    else:
+        low_rms = None
+
+    # vocal-RMS: whole-stem RMS when stem path resolves; 1-4 kHz band of
+    # full mix otherwise. See #290 spec footnote ‡.
+    vocal_rms: float | None = None
+    vocal_rms_source: str = "unavailable"
+
+    resolved_stem: Path | None
+    if vocal_stem_path is not None:
+        resolved_stem = Path(vocal_stem_path)
+    else:
+        resolved_stem = _auto_resolve_vocal_stem(Path(filepath))
+    if resolved_stem is not None and resolved_stem.is_file():
+        stem_mono = _read_vocal_stem(resolved_stem, rate)
+        if stem_mono is not None:
+            rms_val = _rms_db(stem_mono)
+            if np.isfinite(rms_val):
+                vocal_rms = float(rms_val)
+                vocal_rms_source = "stem"
+
+    if vocal_rms is None:
+        try:
+            band_filtered = _bandpass_sos(mono, rate, 1000.0, 4000.0)
+            rms_val = _rms_db(band_filtered)
+            if np.isfinite(rms_val):
+                vocal_rms = float(rms_val)
+                vocal_rms_source = "band_fallback"
+        except Exception as exc:
+            logger.warning("1-4 kHz band fallback failed: %s", exc)
 
     # Momentary: 400ms window, 100ms hop
     mom_window = int(0.4 * rate)
@@ -108,6 +241,14 @@ def analyze_track(filepath: Path | str) -> dict[str, Any]:
                         if np.isfinite(max_short_term) and np.isfinite(min_short_term)
                         else 0.0)
 
+    # signature_meta records provenance for downstream consumers (anchor
+    # selector in phase 2a, coherence check in phase 2b).
+    signature_meta = {
+        'stl_window_count': len(st_values),
+        'stl_top_5pct_count': int(len(stl_top_5pct_indices)),
+        'vocal_rms_source': vocal_rms_source,
+    }
+
     return {
         'filename': os.path.basename(filepath),
         'duration': len(mono) / rate,
@@ -121,6 +262,10 @@ def analyze_track(filepath: Path | str) -> dict[str, Any]:
         'max_short_term_lufs': max_short_term if np.isfinite(max_short_term) else None,
         'max_momentary_lufs': max_momentary if np.isfinite(max_momentary) else None,
         'short_term_range': short_term_range,
+        'stl_95': stl_95,
+        'low_rms': low_rms,
+        'vocal_rms': vocal_rms,
+        'signature_meta': signature_meta,
     }
 
 def main() -> None:
