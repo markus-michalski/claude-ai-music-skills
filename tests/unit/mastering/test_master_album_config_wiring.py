@@ -50,9 +50,15 @@ def _write_tone_wav(
     duration: float = 3.0,
     freq: float = 440.0,
 ) -> None:
-    """Pure tone with matching L/R channels — mono-compat / phase-friendly."""
+    """Tremolo'd tone with matching L/R channels — mono-compat / phase-friendly.
+
+    Slow 0.3 Hz amplitude modulation creates non-trivial LRA (>1 LU) so the
+    post-mastering LRA floor check (#290 step 10) doesn't trip on otherwise-
+    flat synthetic fixtures.
+    """
     t = np.linspace(0, duration, int(sr * duration), endpoint=False)
-    tone = 0.3 * np.sin(2 * np.pi * freq * t)
+    envelope = 0.5 + 0.5 * np.sin(2 * np.pi * 0.3 * t)
+    tone = 0.3 * np.sin(2 * np.pi * freq * t) * envelope
     stereo = np.column_stack([tone, tone])
     sf.write(str(path), stereo, sr, subtype="PCM_16")
 
@@ -63,6 +69,21 @@ def three_track_audio_dir(tmp_path: Path) -> Path:
     audio_dir.mkdir()
     for i, freq in enumerate([440.0, 660.0, 880.0], start=1):
         _write_tone_wav(audio_dir / f"0{i}-track.wav", freq=freq)
+    return audio_dir
+
+
+@pytest.fixture
+def three_track_long_audio_dir(tmp_path: Path) -> Path:
+    """Three 30s tremolo'd tones — long enough for EBU R128 LRA measurement.
+
+    The 3s default fixture has too few short-term windows for analyze_track
+    to measure LRA, so the post-mastering LRA floor check (#290 step 10)
+    sees LRA=0 and trips. Genre-preset tests need this longer fixture.
+    """
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir()
+    for i, freq in enumerate([440.0, 660.0, 880.0], start=1):
+        _write_tone_wav(audio_dir / f"0{i}-track.wav", freq=freq, duration=30.0)
     return audio_dir
 
 
@@ -107,7 +128,7 @@ def test_master_album_outputs_24bit_96khz_with_upsampling_notice(
 
 
 def test_master_album_with_genre_preset_still_produces_24_96(
-    three_track_audio_dir: Path,
+    three_track_long_audio_dir: Path,
 ) -> None:
     """Regression: genre argument must not silently downgrade to 16-bit.
 
@@ -117,7 +138,7 @@ def test_master_album_with_genre_preset_still_produces_24_96(
     """
 
     def _fake_resolve(slug: str, *_: object, **__: object) -> tuple[str | None, Path]:
-        return None, three_track_audio_dir
+        return None, three_track_long_audio_dir
 
     with patch.object(processing_helpers, "_resolve_audio_dir", _fake_resolve), \
          patch.object(shared_mod, "cache", _MockCache()):
@@ -132,7 +153,7 @@ def test_master_album_with_genre_preset_still_produces_24_96(
     assert result["settings"]["output_bits"] == 24
     assert result["settings"]["output_sample_rate"] == 96000
 
-    mastered = three_track_audio_dir / "mastered" / "01-track.wav"
+    mastered = three_track_long_audio_dir / "mastered" / "01-track.wav"
     info = sf.info(str(mastered))
     assert info.samplerate == 96000
     assert info.subtype == "PCM_24"
@@ -182,12 +203,15 @@ def two_track_long_audio_dir(tmp_path: Path) -> Path:
     sr = 44100
     duration = 30.0
     t = np.linspace(0, duration, int(sr * duration), endpoint=False)
+    # Slow tremolo envelope for realistic LRA (>1 LU) — sine fixtures
+    # otherwise have LRA ≈ 0 and trip the post-mastering LRA floor.
+    envelope = 0.5 + 0.5 * np.sin(2 * np.pi * 0.3 * t)
     # Track 1: lower-peak, 440 Hz — moderate peak, pop-ish
-    tone1 = 0.3 * np.sin(2 * np.pi * 440.0 * t)
+    tone1 = 0.3 * np.sin(2 * np.pi * 440.0 * t) * envelope
     sf.write(str(audio_dir / "01-track.wav"),
              np.column_stack([tone1, tone1]), sr, subtype="PCM_16")
     # Track 2: hotter-peak, 660 Hz — closer to ceiling
-    tone2 = 0.7 * np.sin(2 * np.pi * 660.0 * t)
+    tone2 = 0.7 * np.sin(2 * np.pi * 660.0 * t) * envelope
     sf.write(str(audio_dir / "02-track.wav"),
              np.column_stack([tone2, tone2]), sr, subtype="PCM_16")
     return audio_dir
