@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from handlers import _shared
@@ -623,8 +624,13 @@ async def master_album(
             )
         return result
 
+    # Explicit list type keeps mypy from narrowing stage_fn's type to the
+    # first element's concrete function identity — the ADM-loop list below
+    # mixes _stage_* with the local _ceiling_guard wrapper.
+    _StageFn = Callable[[_album_stages.MasterAlbumCtx], Awaitable[str | None]]
+
     # ── Phase 1: pre-loop stages (run once) ──────────────────────────────
-    pre_loop_stages = [
+    pre_loop_stages: list[_StageFn] = [
         _album_stages._stage_pre_flight,
         _album_stages._stage_analysis,
         _album_stages._stage_freeze_decision,
@@ -637,7 +643,7 @@ async def master_album(
 
     # ── Phase 2: ADM loop (max 2 outer cycles) ───────────────────────────
     _ADM_MAX_CYCLES = 2
-    adm_loop_stages = [
+    adm_loop_stages: list[_StageFn] = [
         _album_stages._stage_mastering,
         _album_stages._stage_verification,
         _album_stages._stage_coherence_check,
@@ -689,7 +695,7 @@ async def master_album(
         break  # ADM passed
 
     # ── Phase 3: post-loop stages (run once) ─────────────────────────────
-    post_loop_stages = [
+    post_loop_stages: list[_StageFn] = [
         _album_stages._stage_mastering_samples,
         _album_stages._stage_post_qc,
         _album_stages._stage_archival,
