@@ -59,6 +59,14 @@ from tools.mastering.signature_persistence import (
     read_signature_file,
     write_signature_file,
 )
+from tools.mastering.adm_validation import (
+    ADMValidationError,
+    check_aac_intersample_clips as _adm_check_fn_default,
+    render_adm_validation_markdown,
+)
+from tools.mastering.metadata import (
+    embed_wav_metadata as _embed_wav_metadata_fn_default,
+)
 
 logger = logging.getLogger("bitwize-music-state")
 
@@ -131,6 +139,9 @@ class MasterAlbumCtx:
     # ── stage 5 (verification) ───────────────────────────────────────────────
     verify_results: list[dict[str, Any]] = field(default_factory=list)
 
+    # ── stage 5.5 (ADM validation) ────────────────────────────────────────────
+    adm_validation_results: list[dict[str, Any]] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Runtime notices
@@ -152,6 +163,11 @@ def _build_notices(ctx: MasterAlbumCtx) -> None:
                 f"Badge-eligible for Apple Hi-Res Lossless and Tidal Max — "
                 f"no additional audio information vs. source."
             )
+
+
+# Injectable for test monkeypatching (tests patch this module-level name).
+_adm_check_fn = _adm_check_fn_default
+_embed_wav_metadata_fn = _embed_wav_metadata_fn_default
 
 
 # ---------------------------------------------------------------------------
@@ -1561,5 +1577,174 @@ async def _stage_signature_persist(ctx: MasterAlbumCtx) -> str | None:
     except (SignaturePersistenceError, OSError, TypeError) as exc:
         ctx.warnings.append(f"Signature persist: {exc}")
         ctx.stages["signature_persist"] = {"status": "warn", "error": str(exc)}
+    return None
 
+
+async def _stage_adm_validation(ctx: MasterAlbumCtx) -> str | None:
+    """Stage 5.5: ADM inter-sample clip check via AAC encode+decode (#290 step 9).
+
+    Encodes each mastered WAV to AAC, decodes back, scans decoded PCM for
+    samples above the true-peak ceiling. Halts if clips found; warns (never
+    halts) if the encoder subprocess fails.
+
+    Reads ctx: mastered_files, audio_dir, targets (ceiling_db, adm_aac_encoder),
+               album_slug, warnings
+    Sets ctx:  adm_validation_results, stages["adm_validation"]
+    Returns: None on pass/warn, failure JSON if clips found.
+    """
+    assert ctx.audio_dir is not None
+
+    ceiling_db = float(ctx.targets.get("ceiling_db", -1.0))
+    encoder = str(ctx.targets.get("adm_aac_encoder", "aac"))
+
+    results: list[dict[str, Any]] = []
+    encoder_errors: list[str] = []
+
+    for wav in ctx.mastered_files:
+        try:
+            r = await ctx.loop.run_in_executor(
+                None,
+                functools.partial(
+                    _adm_check_fn, wav,
+                    encoder=encoder, ceiling_db=ceiling_db, bitrate_kbps=256,
+                ),
+            )
+            results.append(r)
+        except ADMValidationError as exc:
+            encoder_errors.append(f"{wav.name}: {exc}")
+
+    ctx.adm_validation_results = results
+
+    # Write ADM_VALIDATION.md regardless of outcome (even partial)
+    encoder_used = encoder
+    if results:
+        encoder_used = results[0].get("encoder_used", encoder)
+    if not results:
+        ctx.notices.append("ADM validation skipped — no results to write")
+    else:
+        try:
+            md = render_adm_validation_markdown(
+                ctx.album_slug, results,
+                encoder_used=encoder_used, ceiling_db=ceiling_db,
+            )
+            atomic_write_text(ctx.audio_dir / "ADM_VALIDATION.md", md)
+        except Exception as exc:
+            ctx.warnings.append(f"ADM sidecar write: {exc}")
+
+    # Encoder errors → warn but never halt (ffmpeg may not be installed)
+    if encoder_errors:
+        for e in encoder_errors:
+            ctx.notices.append(f"ADM validation skipped: {e}")
+        ctx.stages["adm_validation"] = {
+            "status": "warn",
+            "reason": "encoder errors — see notices",
+            "errors": encoder_errors,
+            "clips_found": False,
+        }
+        return None
+
+    clips_found = [r for r in results if r.get("clips_found")]
+    if clips_found:
+        ctx.stages["adm_validation"] = {
+            "status": "fail",
+            "clips_found": True,
+            "tracks_checked": len(results),
+            "tracks_with_clips": len(clips_found),
+            "encoder_used": encoder_used,
+        }
+        return _safe_json({
+            "album_slug": ctx.album_slug,
+            "stage_reached": "adm_validation",
+            "stages": ctx.stages,
+            "settings": ctx.settings,
+            "warnings": ctx.warnings,
+            "notices": ctx.notices,
+            "failed_stage": "adm_validation",
+            "failure_detail": {
+                "reason": "inter-sample peaks detected after AAC encode/decode",
+                "encoder_used": encoder_used,
+                "ceiling_db": ceiling_db,
+                "tracks_with_clips": [
+                    {"filename": r["filename"], "clip_count": r["clip_count"],
+                     "peak_db_decoded": r["peak_db_decoded"]}
+                    for r in clips_found
+                ],
+                "suggestion": (
+                    "Tighten true-peak ceiling by 0.5 dB and re-master, "
+                    "or set mastering.true_peak_ceiling: -1.5 in config.yaml."
+                ),
+            },
+        })
+
+    ctx.stages["adm_validation"] = {
+        "status": "pass",
+        "clips_found": False,
+        "tracks_checked": len(results),
+        "encoder_used": encoder_used,
+        "ceiling_db": ceiling_db,
+    }
+    return None
+
+
+async def _stage_metadata(ctx: MasterAlbumCtx) -> str | None:
+    """Stage 6.6: Embed ID3v2.4 metadata into mastered WAV delivery files (#290).
+
+    Reads artist, copyright, and label from config. Reads album name and
+    track titles from state cache. All fields optional — missing fields are
+    silently skipped. Errors go to ctx.warnings; this stage never halts.
+
+    Reads ctx: album_slug, mastered_files, warnings
+    Sets ctx:  stages["metadata"]
+    Returns: None always.
+    """
+    from tools.shared.config import load_config
+
+    assert ctx.audio_dir is not None
+
+    # --- resolve config metadata ---
+    config = load_config() or {}
+    artist_cfg = config.get("artist") or {}
+    artist_name = str(artist_cfg.get("name") or "")
+    copyright_text = str(artist_cfg.get("copyright_holder") or artist_name)
+    label = str(artist_cfg.get("label") or artist_name)
+
+    # --- resolve track titles from state cache ---
+    state_albums = (_shared.cache.get_state() or {}).get("albums", {})
+    album_data = state_albums.get(_normalize_slug(ctx.album_slug)) or {}
+    album_name = album_data.get("name") or ctx.album_slug
+    state_tracks: dict[str, Any] = album_data.get("tracks") or {}
+
+    embed_count = 0
+    embed_errors: list[str] = []
+
+    for wav in ctx.mastered_files:
+        stem = wav.stem
+        track_info = state_tracks.get(stem) or {}
+        title = str(track_info.get("title") or stem)
+
+        try:
+            await ctx.loop.run_in_executor(
+                None,
+                functools.partial(
+                    _embed_wav_metadata_fn,
+                    wav,
+                    title=title,
+                    artist=artist_name,
+                    album=album_name,
+                    copyright_text=copyright_text,
+                    label=label,
+                ),
+            )
+            embed_count += 1
+        except Exception as exc:
+            embed_errors.append(f"{wav.name}: {exc}")
+
+    for e in embed_errors:
+        ctx.warnings.append(f"Metadata embed: {e}")
+
+    ctx.stages["metadata"] = {
+        "status": "warn" if embed_errors else "pass",
+        "embedded": embed_count,
+        "errors": embed_errors or None,
+    }
     return None

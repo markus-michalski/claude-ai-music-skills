@@ -607,14 +607,26 @@ async def master_album(
         _album_stages._stage_mastering,
         _album_stages._stage_verification,
         _ceiling_guard,
+        _album_stages._stage_adm_validation,   # ← new
         _album_stages._stage_mastering_samples,
         _album_stages._stage_post_qc,
         _album_stages._stage_archival,
+        _album_stages._stage_metadata,     # ← Stage 6.6: embed ID3v2.4 tags
         _album_stages._stage_layout,
         _album_stages._stage_status_update,
         _album_stages._stage_signature_persist,
     ]:
         if result := await stage_fn(ctx):
+            # A4: surface runtime notices on early-exit paths (#290).
+            # _build_notices needs ctx.targets to be populated; safe to call
+            # even on pre_flight failures (returns no notices when targets empty).
+            _album_stages._build_notices(ctx)
+            try:
+                _d = json.loads(result)
+                _d.setdefault("notices", ctx.notices)
+                result = json.dumps(_d)
+            except (json.JSONDecodeError, KeyError):
+                pass
             return result
 
     _album_stages._build_notices(ctx)
