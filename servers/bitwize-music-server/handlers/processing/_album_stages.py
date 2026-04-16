@@ -154,6 +154,9 @@ class MasterAlbumCtx:
     # ── stage 5.5 (ADM validation) ────────────────────────────────────────────
     adm_validation_results: list[dict[str, Any]] = field(default_factory=list)
 
+    # ── ADM retry tracking ────────────────────────────────────────────────
+    adm_cycle: int = 0
+
 
 # ---------------------------------------------------------------------------
 # Runtime notices
@@ -1944,6 +1947,8 @@ async def _stage_adm_validation(ctx: MasterAlbumCtx) -> str | None:
                 "reason": "inter-sample peaks detected after AAC encode/decode",
                 "encoder_used": encoder_used,
                 "ceiling_db": ceiling_db,
+                "clips_retry_eligible": True,
+                "adm_cycles": ctx.adm_cycle + 1,
                 "tracks_with_clips": [
                     {"filename": r["filename"], "clip_count": r["clip_count"],
                      "peak_db_decoded": r["peak_db_decoded"]}
