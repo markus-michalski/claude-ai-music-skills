@@ -1238,6 +1238,46 @@ async def _stage_post_qc(ctx: MasterAlbumCtx) -> str | None:
             },
         })
 
+    # ── LRA floor check (spec step 10: LRA ≥ genre floor, hard fail) ─────────
+    lra_floor = (
+        ctx.preset_dict.get("coherence_lra_floor_lu")
+        if ctx.preset_dict is not None
+        else None
+    )
+    if lra_floor is not None:
+        lra_violations = [
+            {
+                "filename": r["filename"],
+                "lra_lu": r["short_term_range"],
+                "floor_lu": lra_floor,
+            }
+            for r in ctx.verify_results
+            if r["short_term_range"] < lra_floor
+        ]
+        if lra_violations:
+            ctx.stages["post_qc"] = {
+                "status": "fail",
+                "passed": post_passed,
+                "warned": post_warned,
+                "failed": post_failed,
+                "verdict": "LRA FLOOR VIOLATION",
+            }
+            return _safe_json({
+                "album_slug": ctx.album_slug,
+                "stage_reached": "post_qc",
+                "stages": ctx.stages,
+                "settings": ctx.settings,
+                "warnings": ctx.warnings,
+                "failed_stage": "post_qc",
+                "failure_detail": {
+                    "reason": (
+                        f"LRA floor violation: {len(lra_violations)} track(s) "
+                        f"below floor of {lra_floor} LU"
+                    ),
+                    "lra_floor_violations": lra_violations,
+                },
+            })
+
     ctx.stages["post_qc"] = {
         "status": "pass",
         "passed": post_passed,
