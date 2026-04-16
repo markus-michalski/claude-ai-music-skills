@@ -51,6 +51,7 @@ from tools.mastering.config import build_effective_preset
 from tools.mastering.layout import (
     LayoutError,
     compute_transitions as _layout_compute_transitions,
+    parse_layout_yaml as _parse_layout_yaml,
     render_layout_markdown as _layout_render_markdown,
 )
 from tools.mastering.signature_persistence import (
@@ -1354,6 +1355,13 @@ async def _stage_layout(ctx: MasterAlbumCtx) -> str | None:
         if dt in ("gap", "gapless"):
             default_transition = dt
 
+    prior_transitions: list[dict[str, Any]] | None = None
+    layout_path = ctx.audio_dir / "LAYOUT.md"
+    if layout_path.is_file():
+        prior_transitions = _parse_layout_yaml(
+            layout_path.read_text(encoding="utf-8")
+        )
+
     layout_stage: dict[str, Any] = {
         "status": "pass",
         "path": str(ctx.audio_dir / "LAYOUT.md"),
@@ -1363,7 +1371,9 @@ async def _stage_layout(ctx: MasterAlbumCtx) -> str | None:
     try:
         track_filenames = [p.name for p in ctx.mastered_files]
         transitions = _layout_compute_transitions(
-            track_filenames, default_transition=default_transition
+            track_filenames,
+            default_transition=default_transition,
+            prior_transitions=prior_transitions,
         )
         layout_md = _layout_render_markdown(ctx.album_slug, transitions)
         atomic_write_text(ctx.audio_dir / "LAYOUT.md", layout_md)
