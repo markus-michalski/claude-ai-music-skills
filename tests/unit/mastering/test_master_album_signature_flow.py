@@ -135,6 +135,67 @@ def test_master_album_signature_write_failure_is_nonfatal(tmp_path: Path, monkey
     assert "simulated failure" in result["stages"]["signature_persist"]["error"]
 
 
+def test_status_update_does_not_advance_album_when_signature_missing(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Foot-gun gate: album must NOT advance to Complete if signature is missing.
+
+    Otherwise a later 'Released' mark would halt the next master_album run at
+    freeze_decision (Released + missing ALBUM_SIGNATURE.yaml).
+    """
+    from handlers import _shared
+
+    # One Generated track so all_final would be True after status_update.
+    _write_sine_wav(tmp_path / "01-track.wav", amplitude=0.3)
+    track_md = tmp_path / "01-track.md"
+    track_md.write_text(
+        "# Track 1\n\n| **Status** | Generated |\n",
+        encoding="utf-8",
+    )
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "# Test Album\n\n| **Status** | In Progress |\n",
+        encoding="utf-8",
+    )
+
+    fake_state = {"albums": {"foot-gun-album": {
+        "path": str(tmp_path),
+        "status": "In Progress",
+        "tracks": {"01-track": {
+            "path": str(track_md), "title": "Track 1",
+            "status": "Generated", "mtime": 0.0,
+        }},
+    }}}
+    class _FakeCache:
+        def get_state(self): return fake_state
+        def get_state_ref(self): return fake_state
+    monkeypatch.setattr(_shared, "cache", _FakeCache())
+    monkeypatch.setattr(_shared, "PLUGIN_ROOT", None)
+
+    def _fake_resolve(slug, *_, **__):
+        return None, tmp_path
+
+    def _raising_write(*_args, **_kw):
+        from tools.mastering.signature_persistence import SignaturePersistenceError
+        raise SignaturePersistenceError("simulated failure")
+
+    with patch.object(processing_helpers, "_resolve_audio_dir", _fake_resolve), \
+         patch.object(album_stages_mod, "write_signature_file", _raising_write):
+        result_json = asyncio.run(audio_mod.master_album(album_slug="foot-gun-album"))
+
+    result = json.loads(result_json)
+    assert result.get("failed_stage") is None
+    assert result["stages"]["signature_persist"]["status"] == "warn"
+    # Album status MUST NOT have advanced — signature is missing.
+    assert result["stages"]["status_update"]["album_status"] is None
+    # README on disk must still say "In Progress".
+    assert "In Progress" in readme.read_text(encoding="utf-8")
+    assert "Complete" not in readme.read_text(encoding="utf-8")
+    # The skip reason should be in status_update errors.
+    errors = result["stages"]["status_update"].get("errors") or []
+    assert any(SIGNATURE_FILENAME in e for e in errors)
+
+
 def test_released_album_with_signature_enters_frozen_mode(tmp_path: Path, monkeypatch) -> None:
     from tools.mastering.signature_persistence import write_signature_file
 

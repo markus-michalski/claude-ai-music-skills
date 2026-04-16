@@ -157,7 +157,9 @@ def check_aac_intersample_clips(
 
     ceiling_linear = 10.0 ** (ceiling_db / 20.0)
     peak_linear = float(np.max(np.abs(data)))
-    peak_db = float(20.0 * np.log10(peak_linear)) if peak_linear > 0 else float("-inf")
+    # Clamp silent input to -120 dBTP — float("-inf") serializes as -Infinity
+    # in Python's json.dumps, which strict JSON parsers reject.
+    peak_db = float(20.0 * np.log10(peak_linear)) if peak_linear > 0 else -120.0
     clip_count = int(np.sum(np.abs(data) > ceiling_linear))
 
     return {

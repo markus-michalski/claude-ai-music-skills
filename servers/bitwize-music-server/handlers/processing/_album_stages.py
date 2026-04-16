@@ -65,6 +65,7 @@ from tools.mastering.adm_validation import (
     render_adm_validation_markdown,
 )
 from tools.mastering.metadata import (
+    MetadataEmbedError,
     embed_wav_metadata as _embed_wav_metadata_fn_default,
 )
 
@@ -1403,7 +1404,21 @@ async def _stage_status_update(ctx: MasterAlbumCtx) -> str | None:
             t.get("status", "").lower() == TRACK_FINAL.lower()
             for t in tracks.values()
         )
-        if all_final:
+        # Gate album → Complete on ALBUM_SIGNATURE.yaml existing — otherwise a
+        # later "Released" mark would halt the next master_album run at
+        # freeze_decision (Released + missing signature). signature_persist
+        # runs BEFORE this stage in the orchestrator, so the file is on disk
+        # by the time we get here on the happy path.
+        signature_present = (
+            ctx.audio_dir is not None
+            and (ctx.audio_dir / SIGNATURE_FILENAME).is_file()
+        )
+        if all_final and not signature_present:
+            status_errors.append(
+                f"Album not advanced to {ALBUM_COMPLETE}: "
+                f"{SIGNATURE_FILENAME} is missing — see signature_persist warnings"
+            )
+        if all_final and signature_present:
             album_path_str = album_data.get("path", "")
             if album_path_str:
                 readme_path = Path(album_path_str) / "README.md"
@@ -1658,7 +1673,6 @@ async def _stage_adm_validation(ctx: MasterAlbumCtx) -> str | None:
             "stages": ctx.stages,
             "settings": ctx.settings,
             "warnings": ctx.warnings,
-            "notices": ctx.notices,
             "failed_stage": "adm_validation",
             "failure_detail": {
                 "reason": "inter-sample peaks detected after AAC encode/decode",
@@ -1699,8 +1713,6 @@ async def _stage_metadata(ctx: MasterAlbumCtx) -> str | None:
     """
     from tools.shared.config import load_config
 
-    assert ctx.audio_dir is not None
-
     # --- resolve config metadata ---
     config = load_config() or {}
     artist_cfg = config.get("artist") or {}
@@ -1736,7 +1748,7 @@ async def _stage_metadata(ctx: MasterAlbumCtx) -> str | None:
                 ),
             )
             embed_count += 1
-        except Exception as exc:
+        except (MetadataEmbedError, OSError) as exc:
             embed_errors.append(f"{wav.name}: {exc}")
 
     for e in embed_errors:

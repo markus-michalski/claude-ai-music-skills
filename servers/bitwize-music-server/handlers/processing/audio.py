@@ -566,7 +566,7 @@ async def master_album(
 ) -> str:
     """End-to-end mastering pipeline: analyze, QC, master, verify, update status.
 
-    Runs 14 sequential stages, stopping on failure. See _album_stages.py for
+    Runs 16 sequential stages, stopping on failure. See _album_stages.py for
     per-stage implementation. Stage order mirrors the #290 pipeline spec.
     """
     if freeze_signature and new_anchor:
@@ -607,14 +607,18 @@ async def master_album(
         _album_stages._stage_mastering,
         _album_stages._stage_verification,
         _ceiling_guard,
-        _album_stages._stage_adm_validation,   # ← new
+        _album_stages._stage_adm_validation,
         _album_stages._stage_mastering_samples,
         _album_stages._stage_post_qc,
         _album_stages._stage_archival,
-        _album_stages._stage_metadata,     # ← Stage 6.6: embed ID3v2.4 tags
+        _album_stages._stage_metadata,
         _album_stages._stage_layout,
-        _album_stages._stage_status_update,
+        # signature_persist runs BEFORE status_update so the album never
+        # advances to "Complete" without ALBUM_SIGNATURE.yaml on disk —
+        # otherwise a release-without-re-master would halt the next master
+        # at freeze_decision (Released + missing signature).
         _album_stages._stage_signature_persist,
+        _album_stages._stage_status_update,
     ]:
         if result := await stage_fn(ctx):
             # A4: surface runtime notices on early-exit paths (#290).
@@ -625,8 +629,11 @@ async def master_album(
                 _d = json.loads(result)
                 _d.setdefault("notices", ctx.notices)
                 result = json.dumps(_d)
-            except (json.JSONDecodeError, KeyError):
-                pass
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "master_album: halt result is not valid JSON, "
+                    "notices not injected: %s", exc,
+                )
             return result
 
     _album_stages._build_notices(ctx)
