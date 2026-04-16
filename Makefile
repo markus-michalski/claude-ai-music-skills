@@ -36,7 +36,7 @@ $(VENV)/bin/activate: requirements.txt requirements-test.txt
 venv: $(VENV)/bin/activate
 
 test: $(VENV)/bin/activate
-	$(PYTEST) tests/ -v --tb=short \
+	$(PYTEST) tests/ -v --tb=short -n auto \
 		--cov=tools --cov=servers \
 		--cov-report=term-missing \
 		--cov-fail-under=75
