@@ -12,6 +12,7 @@ frontmatter field). Energy / tempo-based auto-detection is future work.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import yaml
@@ -41,16 +42,47 @@ class LayoutError(ValueError):
     """Raised when layout inputs are invalid (unknown mode, malformed input)."""
 
 
+def parse_layout_yaml(markdown: str) -> list[dict[str, Any]]:
+    """Extract and parse the YAML transitions block from a LAYOUT.md string.
+
+    Args:
+        markdown: Full text content of a LAYOUT.md file.
+
+    Returns:
+        List of transition dicts parsed from the yaml fenced block, or an
+        empty list if the block is absent, malformed, or contains no
+        ``transitions`` list.
+    """
+    try:
+        match = re.search(r"```yaml\n(.*?)```", markdown, re.DOTALL)
+        if not match:
+            return []
+        parsed = yaml.safe_load(match.group(1))
+        transitions = parsed.get("transitions") if isinstance(parsed, dict) else None
+        return transitions if isinstance(transitions, list) else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def compute_transitions(
     track_filenames: list[str],
     *,
     default_transition: str = "gap",
+    prior_transitions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one transition per adjacent pair using *default_transition*.
+
+    Hand-edited entries from a previous LAYOUT.md are preserved when
+    *prior_transitions* is supplied: any ``(from, to)`` pair present in
+    *prior_transitions* replaces the freshly-computed default for that pair.
+    Pairs that no longer exist (track removed) are silently dropped.
 
     Args:
         track_filenames:    Ordered list of delivery WAV basenames.
         default_transition: Either ``"gap"`` or ``"gapless"``.
+        prior_transitions:  Parsed transitions from an existing LAYOUT.md,
+                            as returned by :func:`parse_layout_yaml`.  Pass
+                            ``None`` (default) to skip preservation.
 
     Returns:
         List of transition dicts in adjacent-pair order. Empty list when
@@ -79,6 +111,18 @@ def compute_transitions(
             "tail_fade_ms":  defaults["tail_fade_ms"],
             "head_fade_ms":  defaults["head_fade_ms"],
         })
+
+    if prior_transitions:
+        prior_lookup: dict[tuple[str, str], dict[str, Any]] = {
+            (t["from"], t["to"]): t
+            for t in prior_transitions
+            if "from" in t and "to" in t
+        }
+        transitions = [
+            prior_lookup.get((t["from"], t["to"]), t)
+            for t in transitions
+        ]
+
     return transitions
 
 

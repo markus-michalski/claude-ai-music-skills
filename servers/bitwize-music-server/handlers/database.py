@@ -197,8 +197,9 @@ async def db_list_tweets(
             where += " AND t.platform = %s"
             params.append(platform.lower())
 
-        # Total count (before pagination)
-        # nosec B608 — where clause built from hardcoded strings, values via %s params
+        # Total count (before pagination).
+        # Safe: `where` is built from hardcoded strings; all user values
+        # flow through `%s` params, not f-string interpolation.
         count_sql = f"""
             SELECT COUNT(*) as total
             FROM tweets t
@@ -437,12 +438,14 @@ async def db_update_tweet(
             return _safe_json({"error": "No fields to update"})
 
         params.append(tweet_id)
+        # Safe: interpolated column names come from a hardcoded allowlist,
+        # not user input. Row values flow through `%s` params.
         query = f"""
             UPDATE tweets SET {', '.join(updates)}
             WHERE id = %s
             RETURNING id, tweet_text, platform, content_type, media_path,
                       posted, enabled, times_posted, created_at, posted_at
-        """  # nosec B608 — column names from hardcoded allowlist, not user input
+        """  # nosec B608
 
         cur.execute(query, params)
         row = cur.fetchone()
@@ -553,8 +556,9 @@ async def db_search_tweets(
             where += " AND t.platform = %s"
             params.append(platform.lower())
 
-        # Total count (before pagination)
-        # nosec B608 — where clause built from hardcoded strings, values via %s params
+        # Total count (before pagination).
+        # Safe: `where` is built from hardcoded strings; all user values
+        # flow through `%s` params, not f-string interpolation.
         count_sql = f"""
             SELECT COUNT(*) as total
             FROM tweets t

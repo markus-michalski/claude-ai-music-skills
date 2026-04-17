@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from handlers import _shared
@@ -566,8 +567,19 @@ async def master_album(
 ) -> str:
     """End-to-end mastering pipeline: analyze, QC, master, verify, update status.
 
-    Runs 14 sequential stages, stopping on failure. See _album_stages.py for
+    Runs in three phases, stopping on failure. See _album_stages.py for
     per-stage implementation. Stage order mirrors the #290 pipeline spec.
+
+    Phase 1 (pre-loop): pre_flight → analysis → freeze_decision →
+        anchor_selection → pre_qc  (run once)
+
+    Phase 2 (ADM loop, max 2 cycles): mastering → verification →
+        coherence_check → coherence_correct → ceiling_guard →
+        adm_validation.  On inter-sample clip failure the TP ceiling is
+        tightened by 0.5 dB and the loop restarts (up to _ADM_MAX_CYCLES).
+
+    Phase 3 (post-loop): mastering_samples → post_qc → archival →
+        metadata → layout → signature_persist → status_update  (run once)
     """
     if freeze_signature and new_anchor:
         return _safe_json({
@@ -598,36 +610,107 @@ async def master_album(
             c, _compute_overshoots=_ceiling_guard_compute_overshoots,
         )
 
-    for stage_fn in [
+    def _inject_notices_and_return(result: str) -> str:
+        """Inject runtime notices into halt JSON on early exit."""
+        _album_stages._build_notices(ctx)
+        try:
+            _d = json.loads(result)
+            _d.setdefault("notices", ctx.notices)
+            result = json.dumps(_d)
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "master_album: halt result is not valid JSON, "
+                "notices not injected: %s", exc,
+            )
+        return result
+
+    # Explicit list type keeps mypy from narrowing stage_fn's type to the
+    # first element's concrete function identity — the ADM-loop list below
+    # mixes _stage_* with the local _ceiling_guard wrapper.
+    _StageFn = Callable[[_album_stages.MasterAlbumCtx], Awaitable[str | None]]
+
+    # ── Phase 1: pre-loop stages (run once) ──────────────────────────────
+    pre_loop_stages: list[_StageFn] = [
         _album_stages._stage_pre_flight,
         _album_stages._stage_analysis,
         _album_stages._stage_freeze_decision,
         _album_stages._stage_anchor_selection,
         _album_stages._stage_pre_qc,
+    ]
+    for stage_fn in pre_loop_stages:
+        if result := await stage_fn(ctx):
+            return _inject_notices_and_return(result)
+
+    # ── Phase 2: ADM loop (max 2 outer cycles) ───────────────────────────
+    _ADM_MAX_CYCLES = 2
+    adm_loop_stages: list[_StageFn] = [
         _album_stages._stage_mastering,
         _album_stages._stage_verification,
+        _album_stages._stage_coherence_check,
+        _album_stages._stage_coherence_correct,
         _ceiling_guard,
-        _album_stages._stage_adm_validation,   # ← new
+        _album_stages._stage_adm_validation,
+    ]
+
+    for adm_cycle in range(_ADM_MAX_CYCLES):
+        ctx.adm_cycle = adm_cycle
+        adm_retry = False
+
+        for stage_fn in adm_loop_stages:
+            if result := await stage_fn(ctx):
+                # Check if this is a retryable ADM clip failure
+                try:
+                    _d = json.loads(result)
+                except json.JSONDecodeError:
+                    _d = {}
+                is_adm_clip = (
+                    _d.get("failed_stage") == "adm_validation"
+                    and _d.get("failure_detail", {}).get("clips_retry_eligible")
+                    and adm_cycle < _ADM_MAX_CYCLES - 1
+                )
+                if is_adm_clip:
+                    ctx.effective_ceiling -= 0.5
+                    # Propagate the tightened ceiling everywhere the ADM stage
+                    # and downstream consumers (sidecar, halt JSON, signature
+                    # persist) read it. Without this, cycle-2 masters to the
+                    # new ceiling but ADM still compares against the original.
+                    ctx.targets["ceiling_db"] = ctx.effective_ceiling
+                    if isinstance(ctx.effective_preset, dict):
+                        ctx.effective_preset["true_peak_ceiling"] = (
+                            ctx.effective_ceiling
+                        )
+                    ctx.notices.append(
+                        f"ADM cycle {adm_cycle + 1}: inter-sample clips detected, "
+                        f"tightening ceiling to {ctx.effective_ceiling:.1f} dBTP "
+                        f"and re-mastering."
+                    )
+                    adm_retry = True
+                    break
+
+                # Non-retryable halt
+                return _inject_notices_and_return(result)
+
+        if adm_retry:
+            continue
+        break  # ADM passed
+
+    # ── Phase 3: post-loop stages (run once) ─────────────────────────────
+    post_loop_stages: list[_StageFn] = [
         _album_stages._stage_mastering_samples,
         _album_stages._stage_post_qc,
         _album_stages._stage_archival,
-        _album_stages._stage_metadata,     # ← Stage 6.6: embed ID3v2.4 tags
+        _album_stages._stage_metadata,
         _album_stages._stage_layout,
-        _album_stages._stage_status_update,
+        # signature_persist runs BEFORE status_update so the album never
+        # advances to "Complete" without ALBUM_SIGNATURE.yaml on disk —
+        # otherwise a release-without-re-master would halt the next master
+        # at freeze_decision (Released + missing signature).
         _album_stages._stage_signature_persist,
-    ]:
+        _album_stages._stage_status_update,
+    ]
+    for stage_fn in post_loop_stages:
         if result := await stage_fn(ctx):
-            # A4: surface runtime notices on early-exit paths (#290).
-            # _build_notices needs ctx.targets to be populated; safe to call
-            # even on pre_flight failures (returns no notices when targets empty).
-            _album_stages._build_notices(ctx)
-            try:
-                _d = json.loads(result)
-                _d.setdefault("notices", ctx.notices)
-                result = json.dumps(_d)
-            except (json.JSONDecodeError, KeyError):
-                pass
-            return result
+            return _inject_notices_and_return(result)
 
     _album_stages._build_notices(ctx)
     return _safe_json({
@@ -1452,31 +1535,43 @@ async def album_coherence_correct(
             if not entry["correctable"]:
                 continue
             filename = entry["filename"]
+            # Spectral-only outliers have no LUFS target — re-master at the
+            # anchor LUFS so the tilt nudge passes through the limiter chain
+            # without an incidental gain move.
+            applied_target = entry.get(
+                "corrected_target_lufs", plan["anchor_lufs"]
+            )
+            applied_tilt_db = float(entry.get("corrected_tilt_db", 0.0))
             src = polished_dir / filename
             if not src.is_file():
                 response["corrections"].append({
                     "filename":           filename,
                     "status":             "failed",
                     "failure_reason":     f"Polished source missing: {src}",
-                    "applied_target_lufs": entry["corrected_target_lufs"],
+                    "applied_target_lufs": applied_target,
+                    "applied_tilt_db":    applied_tilt_db,
                 })
                 failed += 1
                 continue
             modified_preset = dict(effective_preset)
-            modified_preset["target_lufs"] = entry["corrected_target_lufs"]
+            modified_preset["target_lufs"] = applied_target
             staged = staging_dir / filename
             try:
                 from functools import partial
                 await loop.run_in_executor(
                     None,
-                    partial(master_track, src, staged, preset=modified_preset),
+                    partial(
+                        master_track, src, staged,
+                        preset=modified_preset, tilt_db=applied_tilt_db,
+                    ),
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 response["corrections"].append({
                     "filename":           filename,
                     "status":             "failed",
                     "failure_reason":     f"master_track raised: {exc}",
-                    "applied_target_lufs": entry["corrected_target_lufs"],
+                    "applied_target_lufs": applied_target,
+                    "applied_tilt_db":    applied_tilt_db,
                 })
                 failed += 1
                 continue
@@ -1491,7 +1586,8 @@ async def album_coherence_correct(
                     (t["lufs"] for t in pre_analysis if t["filename"] == filename),
                     None,
                 ),
-                "applied_target_lufs":  entry["corrected_target_lufs"],
+                "applied_target_lufs":  applied_target,
+                "applied_tilt_db":      applied_tilt_db,
                 "result_lufs":          staged_result["lufs"],
                 "status":               "ok",
                 "delta_from_anchor":    delta,

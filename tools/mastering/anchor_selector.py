@@ -49,7 +49,11 @@ def _album_medians(tracks: list[dict[str, Any]]) -> dict[str, float | None]:
     """
     medians: dict[str, float | None] = {}
     for key in SIGNATURE_KEYS:
-        values = [t.get(key) for t in tracks if t.get(key) is not None]
+        # Walrus-filter so mypy sees the narrowed (non-None) value in the
+        # comprehension result — the double-call form left it as Any | None.
+        values: list[float] = [
+            float(v) for t in tracks if (v := t.get(key)) is not None
+        ]
         medians[key] = float(np.median(values)) if values else None
     return medians
 

@@ -33,7 +33,8 @@ def _bandpass_sos(data: np.ndarray, rate: int, low_hz: float, high_hz: float,
     low = max(low_hz, 1.0) / nyquist
     high = min(high_hz, nyquist - 1.0) / nyquist
     sos = signal.butter(order, [low, high], btype='bandpass', output='sos')
-    return signal.sosfiltfilt(sos, data)
+    # scipy.signal.sosfiltfilt is typed to return Any; narrow explicitly.
+    return np.asarray(signal.sosfiltfilt(sos, data))
 
 
 def _rms_db(samples: np.ndarray) -> float:

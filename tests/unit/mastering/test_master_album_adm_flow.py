@@ -6,7 +6,6 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -58,7 +57,7 @@ def test_adm_validation_pass_writes_sidecar(
             album_slug="my-album", genre="", target_lufs=-14.0,
             ceiling_db=-1.0, cut_highmid=0.0, cut_highs=0.0,
             source_subfolder="", freeze_signature=False, new_anchor=False,
-            loop=asyncio.get_event_loop(),
+            loop=asyncio.get_running_loop(),
         )
         ctx.audio_dir = tmp_path
         ctx.mastered_files = [wav1, wav2]
@@ -95,7 +94,7 @@ def test_adm_validation_halt_on_clips(
             album_slug="my-album", genre="", target_lufs=-14.0,
             ceiling_db=-1.0, cut_highmid=0.0, cut_highs=0.0,
             source_subfolder="", freeze_signature=False, new_anchor=False,
-            loop=asyncio.get_event_loop(),
+            loop=asyncio.get_running_loop(),
         )
         ctx.audio_dir = tmp_path
         ctx.mastered_files = [wav1]
@@ -130,7 +129,7 @@ def test_adm_validation_encoder_error_warns_not_halts(
             album_slug="my-album", genre="", target_lufs=-14.0,
             ceiling_db=-1.0, cut_highmid=0.0, cut_highs=0.0,
             source_subfolder="", freeze_signature=False, new_anchor=False,
-            loop=asyncio.get_event_loop(),
+            loop=asyncio.get_running_loop(),
         )
         ctx.audio_dir = tmp_path
         ctx.mastered_files = [wav1]

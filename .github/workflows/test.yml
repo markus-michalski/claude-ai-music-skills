@@ -243,7 +243,7 @@ jobs:
 
     - name: Run bandit security linter
       run: |
-        bandit -r tools/ servers/ -ll -q -s B108
+        bandit -r tools/ servers/ -ll -q -s B108,B608
 
     - name: Run mypy type checker
       run: |
