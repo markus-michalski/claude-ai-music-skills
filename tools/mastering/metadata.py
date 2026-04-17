@@ -20,6 +20,7 @@ Tag mapping:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 
 class MetadataEmbedError(RuntimeError):
@@ -73,7 +74,12 @@ def embed_wav_metadata(
     if audio.tags is None:
         audio.add_tags()
 
-    tags = audio.tags
+    # mutagen's FileType.tags is a class-level `None` literal, so mypy sees
+    # audio.tags as type None regardless of runtime state. Cast to ID3Tags
+    # so the .add() calls below type-check; add_tags() above guarantees
+    # a fresh _WaveID3 is in place.
+    from mutagen.id3 import ID3 as _ID3
+    tags = cast(_ID3, audio.tags)
     if title:
         tags.add(TIT2(encoding=3, text=title))
     if artist:
