@@ -282,6 +282,8 @@ Currently supports **Suno** (default). Service-specific template sections marked
 
 **Development workflow**: Feature branch off `develop` → Conventional Commits → `/bitwize-music:test all` → PR into `develop` → Release: merge `develop` → `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
+**Pre-push gate**: **ALWAYS run `make check` before `git push`.** This runs the same `ruff` + `bandit` + `mypy` + `pytest` suite that CI runs in the Lint and Tests jobs (see `Makefile` + `.github/workflows/test.yml`). `make lint` alone is fine for a quick type-check. Running targeted `pytest tests/unit/…` and file-scoped `ruff check` is NOT equivalent — `make` spins up `.venv` from `requirements.txt + requirements-test.txt` so mypy sees real (not stubbed) third-party types, which is what CI sees. If `make check` fails, fix the root cause; do not push and hope CI catches a different picture.
+
 **External contributor PRs**: When the user mentions merging, reviewing, or having merged a PR from a non-maintainer (anyone other than @bitwize-music), check the Contributors section of README.md. If the PR author is not listed, proactively offer to add them using the same `<a href>` avatar block format as existing entries. Do this without being asked.
 
 ---
