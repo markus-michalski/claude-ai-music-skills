@@ -94,6 +94,48 @@ def test_coherence_check_classifies_tracks() -> None:
 # Test 2: coherence check warns when anchor is missing
 # ---------------------------------------------------------------------------
 
+def test_coherence_check_counts_spectral_correctables() -> None:
+    """#323 follow-up: correctable_count in coherence_check must agree with
+    the entries _stage_coherence_correct will actually act on.
+
+    Previously correctable_count counted LUFS outliers only, but
+    _stage_coherence_correct runs corrections on spectral outliers
+    (low_rms / vocal_rms) too. When a track had only a spectral outlier,
+    correctable_count reported 0 while the correct stage still ran — a
+    misleading pre-correct report. This test pins the two views together.
+    """
+    # Anchor clean, track 2 has a +4 dB low_rms delta (spectral outlier
+    # only, LUFS matches anchor).
+    anchor = _make_verify_result("01-anchor.wav", lufs=-14.0, low_rms=-18.0)
+    spectral_outlier = _make_verify_result(
+        "02-bright.wav", lufs=-14.0, low_rms=-14.0,
+    )
+    verify_results = [anchor, spectral_outlier]
+
+    async def _run():
+        ctx = MasterAlbumCtx(
+            album_slug="test-album", genre="", target_lufs=-14.0,
+            ceiling_db=-1.0, cut_highmid=0.0, cut_highs=0.0,
+            source_subfolder="", freeze_signature=False, new_anchor=False,
+            loop=asyncio.get_running_loop(),
+        )
+        ctx.anchor_result = {"selected_index": 1}
+        ctx.verify_results = verify_results
+        ctx.preset_dict = None
+        result = await _stage_coherence_check(ctx)
+        return result, ctx
+
+    _, ctx = asyncio.run(_run())
+    stage = ctx.stages["coherence_check"]
+    assert stage["outlier_count"] == 1, (
+        f"Expected 1 outlier (spectral), got {stage['outlier_count']}"
+    )
+    assert stage["correctable_count"] == 1, (
+        "correctable_count must include spectral outliers — "
+        f"got {stage['correctable_count']}"
+    )
+
+
 def test_coherence_check_warns_without_anchor() -> None:
     """No valid anchor → stage status warn with reason no_anchor."""
     async def _run():
@@ -444,6 +486,155 @@ def test_coherence_correct_applies_tilt_for_low_rms_outlier(
     assert call["target_lufs"] == pytest.approx(anchor_lufs, abs=1e-6)
     corrections = ctx.stages["coherence_correct"]["corrections"]
     assert corrections[0]["applied_tilt_db"] == pytest.approx(0.5, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Test 6: fixed-point non-convergence breaks loop early (#323 comment)
+# ---------------------------------------------------------------------------
+
+def test_coherence_correct_breaks_on_fixed_point_with_tilt_clamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When consecutive iterations produce identical correction plans AND
+    at least one tilt is clamped, the loop must break early with an
+    unconvergent entry instead of burning the full iteration budget.
+
+    Previously (pre-#323 fix) the loop re-mastered from the same polished
+    source with the same clamped tilt every iteration, producing identical
+    output and zero progress.
+    """
+    anchor_lufs = -14.0
+    source_dir = tmp_path / "polished"
+    source_dir.mkdir()
+    output_dir = tmp_path / "mastered"
+    output_dir.mkdir()
+    _write_sine_wav(source_dir / "02-bassy.wav", amplitude=0.2)
+    import shutil
+    shutil.copy(source_dir / "02-bassy.wav", output_dir / "02-bassy.wav")
+    _write_sine_wav(output_dir / "01-anchor.wav")
+
+    captured_calls: list[dict] = []
+
+    def _fake_master_track(src: str, dst: str, **kwargs) -> dict:
+        captured_calls.append({"src": src, "dst": dst, **kwargs})
+        shutil.copy(src, dst)
+        return {"status": "ok"}
+
+    import tools.mastering.master_tracks as _mt_mod
+    monkeypatch.setattr(_mt_mod, "master_track", _fake_master_track)
+
+    # Plan: spectral outlier whose tilt sits at the clamp. Same plan every
+    # call → signature repeats → loop must break on iteration 2.
+    def _fake_plan(classifications, analysis_results, anchor_index_1based):
+        return {
+            "anchor_index": anchor_index_1based,
+            "anchor_lufs": anchor_lufs,
+            "corrections": [
+                {
+                    "index": 2,
+                    "filename": "02-bassy.wav",
+                    "correctable": True,
+                    "corrected_tilt_db": 0.5,
+                    "tilt_clamped": True,
+                    "reason": "Spectral outlier (low_rms) → tilt_db=+0.50 (clamped)",
+                }
+            ],
+            "skipped": [{"index": 1, "filename": "01-anchor.wav", "reason": "is_anchor"}],
+        }
+
+    monkeypatch.setattr(album_stages_mod, "_coherence_build_plan", _fake_plan)
+    # Use the default _COHERENCE_MAX_ITERATIONS (2) so the loop COULD run
+    # twice if no fixed-point detection existed.
+
+    # Make the re-analysis step a no-op: analyze_track returns the same
+    # outlier verify_result every call so the plan stays identical.
+    verify_results = [
+        _make_verify_result("01-anchor.wav", lufs=anchor_lufs, low_rms=-20.0),
+        _make_verify_result("02-bassy.wav", lufs=-14.0, low_rms=-15.0),
+    ]
+
+    def _fake_analyze(path: str) -> dict:
+        name = Path(path).name
+        for r in verify_results:
+            if r["filename"] == name:
+                return r
+        return verify_results[0]
+
+    import tools.mastering.analyze_tracks as _at_mod
+    monkeypatch.setattr(_at_mod, "analyze_track", _fake_analyze)
+
+    classifications = [
+        {
+            "index": 1,
+            "filename": "01-anchor.wav",
+            "is_anchor": True,
+            "is_outlier": False,
+            "violations": [],
+        },
+        {
+            "index": 2,
+            "filename": "02-bassy.wav",
+            "is_anchor": False,
+            "is_outlier": True,
+            "violations": [
+                {"metric": "lufs", "delta": 0.1, "tolerance": 0.5,
+                 "severity": "ok", "correctable": False},
+                {"metric": "low_rms", "delta": 5.0, "tolerance": 2.0,
+                 "severity": "outlier", "correctable": True},
+            ],
+        },
+    ]
+
+    async def _run():
+        ctx = MasterAlbumCtx(
+            album_slug="test-album", genre="", target_lufs=-14.0,
+            ceiling_db=-1.0, cut_highmid=0.0, cut_highs=0.0,
+            source_subfolder="", freeze_signature=False, new_anchor=False,
+            loop=asyncio.get_running_loop(),
+        )
+        ctx.anchor_result = {"selected_index": 1}
+        ctx.verify_results = verify_results
+        ctx.coherence_classifications = classifications
+        ctx.source_dir = source_dir
+        ctx.output_dir = output_dir
+        ctx.mastered_files = [
+            output_dir / "01-anchor.wav",
+            output_dir / "02-bassy.wav",
+        ]
+        ctx.effective_ceiling = -1.0
+        ctx.effective_compress = 1.0
+        ctx.effective_preset = {}
+        ctx.preset_dict = None
+        result = await _stage_coherence_correct(ctx)
+        return result, ctx
+
+    result, ctx = asyncio.run(_run())
+    assert result is None
+
+    stage = ctx.stages["coherence_correct"]
+    # Must re-master ONCE (iteration 1) then detect fixed point on
+    # iteration 2 and skip the re-master.
+    assert len(captured_calls) == 1, (
+        f"Expected a single re-master before the fixed-point break, "
+        f"got {len(captured_calls)} calls"
+    )
+    # iterations_run counts only iterations that actually re-mastered.
+    assert stage["iterations"] == 1, (
+        f"Expected iterations=1 (loop breaks before iter 2 re-masters), "
+        f"got {stage['iterations']}"
+    )
+    # Must flag the stuck track with unconvergent status + tilt_clamp reason.
+    unconvergent = [
+        c for c in stage["corrections"]
+        if c.get("status") == "unconvergent" and c.get("filename") == "02-bassy.wav"
+    ]
+    assert unconvergent, (
+        f"Expected unconvergent entry for 02-bassy.wav, got corrections: "
+        f"{stage['corrections']}"
+    )
+    assert "fixed_point" in unconvergent[0].get("reason", ""), (
+        f"Expected fixed_point reason, got: {unconvergent[0].get('reason')}"
+    )
 
 
 # ---------------------------------------------------------------------------
