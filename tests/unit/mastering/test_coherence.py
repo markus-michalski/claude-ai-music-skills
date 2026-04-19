@@ -43,6 +43,14 @@ class TestLoadTolerances:
         tolerances = load_tolerances(preset)
         assert tolerances["lufs_tolerance_lu"] == pytest.approx(0.5)
 
+    def test_coherence_tilt_max_db_defaults_to_half_db(self):
+        tolerances = load_tolerances(None)
+        assert tolerances["coherence_tilt_max_db"] == pytest.approx(0.5)
+
+    def test_coherence_tilt_max_db_overridable_from_preset(self):
+        tolerances = load_tolerances({"coherence_tilt_max_db": 0.75})
+        assert tolerances["coherence_tilt_max_db"] == pytest.approx(0.75)
+
 
 def _delta(**overrides) -> dict:
     """Minimal delta dict matching compute_anchor_deltas output."""
@@ -357,3 +365,185 @@ class TestTiltClampedFlag:
         entry = plan["corrections"][0]
         assert entry["corrected_tilt_db"] == pytest.approx(0.3, abs=1e-9)
         assert entry["tilt_clamped"] is False
+
+
+class TestComputeTiltDb:
+    """#334: _compute_tilt_db returns (tilt, clamped, raw, limiting_metric, delta)."""
+
+    def _violations_low_rms(self, delta: float) -> list[dict]:
+        return [
+            {"metric": "lufs",      "delta": 0.0, "tolerance": 0.5,
+             "severity": "ok",      "correctable": False},
+            {"metric": "stl_95",    "delta": 0.0, "tolerance": 0.5,
+             "severity": "ok",      "correctable": False},
+            {"metric": "lra_floor", "value": 3.0, "floor": 1.0,
+             "severity": "ok",      "correctable": False},
+            {"metric": "low_rms",   "delta": delta, "tolerance": 2.0,
+             "severity": "outlier", "correctable": True},
+            {"metric": "vocal_rms", "delta": 0.0, "tolerance": 2.0,
+             "severity": "ok",      "correctable": False},
+        ]
+
+    def _violations_vocal_rms(self, delta: float) -> list[dict]:
+        v = self._violations_low_rms(0.0)
+        v[3]["severity"] = "ok"
+        v[4] = {"metric": "vocal_rms", "delta": delta, "tolerance": 2.0,
+                "severity": "outlier", "correctable": True}
+        return v
+
+    def test_low_rms_clamped_returns_full_tuple(self):
+        from tools.mastering.coherence import _compute_tilt_db
+        tilt, clamped, raw, metric, delta = _compute_tilt_db(self._violations_low_rms(3.0))
+        assert tilt == pytest.approx(0.5)
+        assert clamped is True
+        assert raw == pytest.approx(3.0)
+        assert metric == "low_rms_db"
+        assert delta == pytest.approx(3.0)
+
+    def test_low_rms_within_clamp_reports_raw_equals_applied(self):
+        from tools.mastering.coherence import _compute_tilt_db
+        violations = self._violations_low_rms(0.3)
+        violations[3]["tolerance"] = 0.1
+        tilt, clamped, raw, metric, delta = _compute_tilt_db(violations)
+        assert tilt == pytest.approx(0.3, abs=1e-9)
+        assert clamped is False
+        assert raw == pytest.approx(0.3, abs=1e-9)
+        assert metric == "low_rms_db"
+        assert delta == pytest.approx(0.3, abs=1e-9)
+
+    def test_vocal_rms_inverts_sign_and_reports_metric(self):
+        from tools.mastering.coherence import _compute_tilt_db
+        tilt, clamped, raw, metric, delta = _compute_tilt_db(self._violations_vocal_rms(2.0))
+        assert tilt == pytest.approx(-0.5)
+        assert clamped is True
+        assert raw == pytest.approx(-2.0)
+        assert metric == "vocal_rms_db"
+        assert delta == pytest.approx(2.0)  # un-inverted signed delta
+
+    def test_no_spectral_violation_returns_zeros_and_none(self):
+        from tools.mastering.coherence import _compute_tilt_db
+        violations = [
+            {"metric": "lufs",     "delta": 0.0, "tolerance": 0.5,
+             "severity": "ok",     "correctable": False},
+            {"metric": "low_rms",  "delta": 0.0, "tolerance": 2.0,
+             "severity": "ok",     "correctable": False},
+            {"metric": "vocal_rms","delta": 0.0, "tolerance": 2.0,
+             "severity": "ok",     "correctable": False},
+        ]
+        tilt, clamped, raw, metric, delta = _compute_tilt_db(violations)
+        assert tilt == 0.0
+        assert clamped is False
+        assert raw == 0.0
+        assert metric is None
+        assert delta is None
+
+    def test_max_tilt_db_override_widens_clamp(self):
+        from tools.mastering.coherence import _compute_tilt_db
+        tilt, clamped, raw, metric, delta = _compute_tilt_db(
+            self._violations_low_rms(0.6), max_tilt_db=0.75
+        )
+        assert tilt == pytest.approx(0.6)
+        assert clamped is False
+        assert raw == pytest.approx(0.6)
+        assert metric == "low_rms_db"
+
+    def test_max_tilt_db_override_still_clamps_at_new_ceiling(self):
+        from tools.mastering.coherence import _compute_tilt_db
+        tilt, clamped, raw, _, _ = _compute_tilt_db(
+            self._violations_low_rms(1.2), max_tilt_db=0.75
+        )
+        assert tilt == pytest.approx(0.75)
+        assert clamped is True
+        assert raw == pytest.approx(1.2)
+
+
+class TestBuildCorrectionPlanDiagnostics:
+    """#334: plan entries expose intended_tilt_db, limiting_metric, spectral_delta_db."""
+
+    def _classifications(self, low_rms_delta: float) -> list[dict]:
+        return [
+            {"index": 1, "filename": "01.wav", "is_anchor": True,
+             "is_outlier": False, "violations": []},
+            {"index": 2, "filename": "02.wav", "is_anchor": False,
+             "is_outlier": True, "violations": [
+                {"metric": "lufs",      "delta": 0.0, "tolerance": 0.5,
+                 "severity": "ok",      "correctable": False},
+                {"metric": "stl_95",    "delta": 0.0, "tolerance": 0.5,
+                 "severity": "ok",      "correctable": False},
+                {"metric": "lra_floor", "value": 3.0, "floor": 1.0,
+                 "severity": "ok",      "correctable": False},
+                {"metric": "low_rms",   "delta": low_rms_delta, "tolerance": 2.0,
+                 "severity": "outlier", "correctable": True},
+                {"metric": "vocal_rms", "delta": 0.0, "tolerance": 2.0,
+                 "severity": "ok",      "correctable": False},
+             ]},
+        ]
+
+    def test_clamped_entry_reports_intended_and_limiting(self):
+        classifications = self._classifications(3.0)
+        analyses = [
+            _analysis(filename="01.wav", lufs=-14.0),
+            _analysis(filename="02.wav", lufs=-14.0),
+        ]
+        plan = build_correction_plan(classifications, analyses, anchor_index_1based=1)
+        entry = plan["corrections"][0]
+        assert entry["corrected_tilt_db"] == pytest.approx(0.5)
+        assert entry["tilt_clamped"] is True
+        assert entry["intended_tilt_db"] == pytest.approx(3.0)
+        assert entry["limiting_metric"] == "low_rms_db"
+        assert entry["spectral_delta_db"] == pytest.approx(3.0)
+
+    def test_unclamped_entry_still_reports_diagnostics(self):
+        classifications = self._classifications(0.3)
+        # Force outlier severity so spectral path fires below default tolerance.
+        classifications[1]["violations"][3]["tolerance"] = 0.1
+        analyses = [
+            _analysis(filename="01.wav", lufs=-14.0),
+            _analysis(filename="02.wav", lufs=-14.0),
+        ]
+        plan = build_correction_plan(classifications, analyses, anchor_index_1based=1)
+        entry = plan["corrections"][0]
+        assert entry["intended_tilt_db"] == pytest.approx(0.3, abs=1e-9)
+        assert entry["limiting_metric"] == "low_rms_db"
+        assert entry["spectral_delta_db"] == pytest.approx(0.3, abs=1e-9)
+
+    def test_max_tilt_db_kwarg_widens_the_clamp(self):
+        classifications = self._classifications(0.6)
+        analyses = [
+            _analysis(filename="01.wav", lufs=-14.0),
+            _analysis(filename="02.wav", lufs=-14.0),
+        ]
+        plan = build_correction_plan(
+            classifications, analyses, anchor_index_1based=1, max_tilt_db=0.75
+        )
+        entry = plan["corrections"][0]
+        assert entry["corrected_tilt_db"] == pytest.approx(0.6)
+        assert entry["tilt_clamped"] is False
+        assert entry["intended_tilt_db"] == pytest.approx(0.6)
+
+    def test_lufs_only_entry_omits_spectral_diagnostics(self):
+        # LUFS outlier, no spectral violation → no tilt fields at all.
+        classifications = [
+            {"index": 1, "filename": "01.wav", "is_anchor": True,
+             "is_outlier": False, "violations": []},
+            {"index": 2, "filename": "02.wav", "is_anchor": False,
+             "is_outlier": True, "violations": [
+                {"metric": "lufs",     "delta": 1.0, "tolerance": 0.5,
+                 "severity": "outlier", "correctable": True},
+                {"metric": "low_rms",  "delta": 0.0, "tolerance": 2.0,
+                 "severity": "ok",      "correctable": False},
+                {"metric": "vocal_rms","delta": 0.0, "tolerance": 2.0,
+                 "severity": "ok",      "correctable": False},
+             ]},
+        ]
+        analyses = [
+            _analysis(filename="01.wav", lufs=-14.0),
+            _analysis(filename="02.wav", lufs=-15.0),
+        ]
+        plan = build_correction_plan(classifications, analyses, anchor_index_1based=1)
+        entry = plan["corrections"][0]
+        assert entry["correctable"] is True
+        assert "corrected_target_lufs" in entry
+        assert "intended_tilt_db" not in entry
+        assert "limiting_metric" not in entry
+        assert "spectral_delta_db" not in entry
