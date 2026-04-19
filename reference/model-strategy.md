@@ -173,7 +173,7 @@ These skills require reasoning and moderate creativity but follow established pa
 
 ---
 
-## Haiku 4.5 Skills (15 skills)
+## Haiku 4.5 Skills (17 skills)
 
 These skills perform simple, rule-based operations with no creative judgment.
 
@@ -197,6 +197,9 @@ These skills perform simple, rule-based operations with no creative judgment.
 
 ### new-album
 **Why Haiku**: Creates album directory structure from templates. Follows a template exactly: create folders, copy files, replace placeholders. No creative decisions.
+
+### promote-idea
+**Why Haiku**: Orchestrates a fixed 5-step pipeline (find idea → derive slug → create album → inject concept → update status). The MCP tool `promote_idea` does the real work; the skill just parses arguments, asks about the `documentary` flag when missing, and reports results. Deterministic — same inputs produce the same outputs. No creative judgment needed.
 
 ### setup
 **Why Haiku**: Detects Python environment and checks for installed dependencies. Rule-based checks: run commands, parse output, show appropriate installation instructions. No judgment - just environment detection and templated guidance.

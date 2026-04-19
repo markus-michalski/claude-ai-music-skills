@@ -1,9 +1,11 @@
-"""Idea management tools — create and update album ideas."""
+"""Idea management tools — create, update, and promote album ideas."""
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,119 @@ def _resolve_ideas_path() -> Path | None:
     if not content_root:
         return None
     return Path(content_root) / "IDEAS.md"
+
+
+def _derive_slug_from_title(title: str) -> str:
+    """Derive an album slug from an idea title.
+
+    Strips diacritics (NFKD + ASCII-only), elides apostrophes so contractions
+    stay intact (``Who's`` → ``whos``, not ``who-s``), lowercases, and reduces
+    any run of non-alphanumeric characters to a single hyphen. Trailing
+    hyphens are trimmed. Empty result means the title had no usable characters.
+    """
+    normalized = unicodedata.normalize("NFKD", title)
+    ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
+    # Elide apostrophes (straight + curly already stripped via ASCII encode)
+    # before the general non-alphanumeric → hyphen pass, so "Who's" → "whos".
+    ascii_only = ascii_only.replace("'", "")
+    return re.sub(r"[^a-z0-9]+", "-", ascii_only.lower()).strip("-")
+
+
+def _find_idea_in_state(title: str) -> dict[str, Any] | None:
+    """Find an idea by title (case-insensitive exact match) in the state cache."""
+    state = _shared.cache.get_state()
+    items = state.get("ideas", {}).get("items", [])
+    needle = title.strip().lower()
+    for item in items:
+        if isinstance(item, dict) and item.get("title", "").strip().lower() == needle:
+            return item
+    return None
+
+
+def _inject_concept_into_readme(
+    readme_path: Path, idea_title: str, concept: str
+) -> bool:
+    """Insert a Concept block into the album README after the first H1 heading.
+
+    Returns True on success, False if the file is unreadable or has no H1.
+    """
+    if not readme_path.exists():
+        return False
+    try:
+        text = readme_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    block = (
+        f"\n\n## Concept\n\n"
+        f"_Promoted from idea **{idea_title}**:_\n\n"
+        f"> {concept}\n"
+    )
+
+    # Insert after the first H1 heading (skipping YAML frontmatter).
+    h1 = re.search(r'^(# .+?)$', text, re.MULTILINE)
+    if h1:
+        insert_pos = h1.end()
+        new_text = text[:insert_pos] + block + text[insert_pos:]
+    else:
+        new_text = text.rstrip() + block
+
+    try:
+        readme_path.write_text(new_text, encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def _set_promoted_to_field(title: str, slug: str) -> bool:
+    """Add or update ``**Promoted To**: <slug>`` in the idea's IDEAS.md section."""
+    ideas_path = _resolve_ideas_path()
+    if not ideas_path or not ideas_path.exists():
+        return False
+    try:
+        text = ideas_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    title_pattern = re.compile(
+        r'^###\s+' + re.escape(title.strip()) + r'\s*$', re.MULTILINE
+    )
+    title_match = title_pattern.search(text)
+    if not title_match:
+        return False
+
+    section_start = title_match.end()
+    next_section = re.search(r'^###\s+', text[section_start:], re.MULTILINE)
+    section_end = (
+        section_start + next_section.start() if next_section else len(text)
+    )
+    section_text = text[section_start:section_end]
+
+    promoted_re = re.compile(
+        r'^\*\*Promoted To\*\*\s*:\s*.+$', re.MULTILINE
+    )
+    if promoted_re.search(section_text):
+        new_section = promoted_re.sub(f"**Promoted To**: {slug}", section_text)
+    else:
+        # Insert right after the Status line; fall back to end of section.
+        status_re = re.compile(r'^(\*\*Status\*\*\s*:\s*.+)$', re.MULTILINE)
+        status_match = status_re.search(section_text)
+        if status_match:
+            insert_pos = status_match.end()
+            new_section = (
+                section_text[:insert_pos]
+                + f"\n**Promoted To**: {slug}"
+                + section_text[insert_pos:]
+            )
+        else:
+            new_section = section_text.rstrip() + f"\n**Promoted To**: {slug}\n"
+
+    new_text = text[:section_start] + new_section + text[section_end:]
+    try:
+        ideas_path.write_text(new_text, encoding="utf-8")
+    except OSError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +322,115 @@ async def update_idea(title: str, field: str, value: str) -> str:
     })
 
 
+async def promote_idea(
+    idea_title: str,
+    album_slug: str = "",
+    documentary: bool = False,
+) -> str:
+    """Promote an album idea into an actual album project.
+
+    Looks up the idea by title, auto-derives a slug from the title (unless one
+    is supplied), creates the album directory structure via
+    ``create_album_structure``, injects the idea's concept text into the new
+    album README, and advances the idea's status from ``Pending`` to
+    ``In Progress`` with a ``Promoted To`` back-link.
+
+    Args:
+        idea_title: Exact idea title as stored in IDEAS.md.
+        album_slug: Optional override slug; auto-derived from the title if empty.
+        documentary: If True, also creates RESEARCH.md and SOURCES.md.
+
+    Returns:
+        JSON with ``{promoted: True, slug, genre, album_path, files, ...}`` on
+        success, or ``{error: ...}`` on failure.
+    """
+    # Lazy import to avoid any circular-import risk at module load time.
+    from handlers.album_ops import create_album_structure
+
+    idea = _find_idea_in_state(idea_title)
+    if idea is None:
+        return _safe_json({
+            "error": f"Idea '{idea_title}' not found in IDEAS.md",
+            "hint": "Use get_ideas to list available ideas.",
+        })
+
+    status = idea.get("status", "Pending").strip()
+    if status.lower() != "pending":
+        return _safe_json({
+            "error": (
+                f"Idea '{idea_title}' is already promoted "
+                f"(current status: {status})"
+            ),
+            "current_status": status,
+            "promoted_to": idea.get("promoted_to", ""),
+        })
+
+    genre = idea.get("genre", "").strip()
+    if not genre:
+        return _safe_json({
+            "error": (
+                f"Idea '{idea_title}' has no genre set. "
+                f"Set the **Genre** field in IDEAS.md before promoting."
+            ),
+        })
+
+    slug = album_slug.strip() if album_slug.strip() else _derive_slug_from_title(idea_title)
+    if not slug:
+        return _safe_json({
+            "error": (
+                f"Cannot derive album slug from title '{idea_title}'. "
+                f"Supply an explicit album_slug."
+            ),
+        })
+
+    # Create album — surface errors (duplicate slug, invalid genre) verbatim.
+    album_result = json.loads(await create_album_structure(slug, genre, documentary))
+    if not album_result.get("created"):
+        error_msg = album_result.get("error", "Failed to create album structure")
+        return _safe_json({
+            "error": error_msg,
+            "idea_title": idea_title.strip(),
+            "slug": slug,
+            "genre": genre,
+        })
+
+    album_path = Path(album_result["path"])
+
+    concept = idea.get("concept", "").strip()
+    concept_injected = False
+    if concept:
+        concept_injected = _inject_concept_into_readme(
+            album_path / "README.md", idea_title.strip(), concept
+        )
+
+    # Update idea: status → In Progress, Promoted To → slug. Failures here are
+    # non-fatal (album already created); log but don't roll back.
+    status_result = json.loads(await update_idea(idea_title, "status", "In Progress"))
+    if status_result.get("error"):
+        logger.warning(
+            "Album created but status update failed for '%s': %s",
+            idea_title, status_result.get("error"),
+        )
+    _set_promoted_to_field(idea_title, slug)
+
+    try:
+        _shared.cache.rebuild()
+    except Exception as e:
+        logger.warning("promote_idea: cache rebuild failed: %s", e)
+
+    return _safe_json({
+        "promoted": True,
+        "idea_title": idea_title.strip(),
+        "slug": slug,
+        "genre": genre,
+        "documentary": documentary,
+        "album_path": str(album_path),
+        "tracks_path": album_result.get("tracks_path", ""),
+        "files": album_result.get("files", []),
+        "concept_injected": concept_injected,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -215,3 +439,4 @@ def register(mcp: Any) -> None:
     """Register idea management tools with the MCP server."""
     mcp.tool()(create_idea)
     mcp.tool()(update_idea)
+    mcp.tool()(promote_idea)

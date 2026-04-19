@@ -460,6 +460,7 @@ from handlers.health import (  # noqa: F401
 # Ideas tools
 from handlers.ideas import (  # noqa: F401
     create_idea,
+    promote_idea,
     update_idea,
 )
 
