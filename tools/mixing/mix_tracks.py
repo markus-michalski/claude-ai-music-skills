@@ -1030,13 +1030,49 @@ def _resolve_master_click_thresholds(genre: str | None) -> tuple[float | None, i
     )
 
 
-def _get_stem_settings(stem_name: str, genre: str | None = None) -> dict[str, Any]:
+# #336: whitelist of analyzer recommendation keys that are allowed to
+# override genre defaults in polish. click_removal is intentionally
+# excluded — it's wired through _resolve_analyzer_peak_ratio, not
+# merged into per-stem EQ settings.
+_ANALYZER_EQ_OVERRIDE_KEYS = frozenset({
+    "mud_cut_db",
+    "high_tame_db",
+    "noise_reduction",
+    "highpass_cutoff",
+})
+
+# #336: map each whitelisted EQ parameter to the analyzer issue tags
+# that justify it. Used by mix_track_stems to produce a per-parameter
+# `reason` in overrides_applied — without this map, a stem with
+# multiple issues spanning multiple parameters would show the same
+# (wrong) reason on every override entry.
+_ANALYZER_PARAM_REASONS: dict[str, tuple[str, ...]] = {
+    "high_tame_db":    ("harsh_highmids", "already_dark"),
+    "mud_cut_db":      ("muddy_low_mids",),
+    "noise_reduction": ("elevated_noise_floor",),
+    "highpass_cutoff": ("sub_rumble",),
+}
+
+
+def _get_stem_settings(
+    stem_name: str,
+    genre: str | None = None,
+    analyzer_rec: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Get processing settings for a specific stem type.
 
     Args:
-        stem_name: One of 'vocals', 'backing_vocals', 'drums', 'bass', 'guitar',
-            'keyboard', 'strings', 'brass', 'woodwinds', 'percussion', 'synth', 'other'
+        stem_name: One of 'vocals', 'backing_vocals', 'drums', 'bass',
+            'guitar', 'keyboard', 'strings', 'brass', 'woodwinds',
+            'percussion', 'synth', 'other'
         genre: Optional genre name for genre-specific overrides
+        analyzer_rec: Optional per-stem recommendations from
+            `analyze_mix_issues`. When provided, any whitelisted key
+            (mud_cut_db, high_tame_db, noise_reduction, highpass_cutoff)
+            overrides the genre default. Non-whitelisted keys
+            (click_removal, etc.) are ignored. A sentinel value of 0.0
+            is honored — it means "override the genre default to
+            zero," not "no recommendation." (#336)
 
     Returns:
         Dict of processing settings for this stem.
@@ -1062,6 +1098,15 @@ def _get_stem_settings(stem_name: str, genre: str | None = None) -> dict[str, An
         result['click_peak_ratio'] = peak_ratio
     if fail_count is not None and 'click_fail_count' not in result:
         result['click_fail_count'] = fail_count
+
+    # #336: analyzer per-stem recommendations layer on top of genre
+    # defaults. Whitelist-filter so click_removal and unknown keys
+    # don't leak into the settings dict.
+    if analyzer_rec:
+        for key, value in analyzer_rec.items():
+            if key in _ANALYZER_EQ_OVERRIDE_KEYS:
+                result[key] = value
+
     return result
 
 
@@ -1812,9 +1857,14 @@ STEM_PROCESSORS: dict[str, Callable[..., Any]] = {
 # ─── Full Pipeline Functions ─────────────────────────────────────────
 
 
-def mix_track_stems(stem_paths: dict[str, str | list[str]], output_path: Path | str,
-                    genre: str | None = None, dry_run: bool = False,
-                    stem_output_dir: Path | None = None) -> dict[str, Any]:
+def mix_track_stems(
+    stem_paths: dict[str, str | list[str]],
+    output_path: Path | str,
+    genre: str | None = None,
+    dry_run: bool = False,
+    stem_output_dir: Path | None = None,
+    analyzer_recs: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Full stems pipeline: load stems, process each, remix, write output.
 
     Args:
@@ -1823,14 +1873,25 @@ def mix_track_stems(stem_paths: dict[str, str | list[str]], output_path: Path | 
         output_path: Path for polished output WAV
         genre: Optional genre name for preset selection
         dry_run: If True, analyze only without writing files
+        stem_output_dir: Optional per-stem output directory
+        analyzer_recs: Optional per-stem analyzer output from
+            ``analyze_mix_issues``. Shape: ``{stem_name: {"recommendations":
+            {...}, "issues": [...]}}``. When provided, whitelisted EQ
+            keys in ``recommendations`` override genre defaults for that
+            stem. The overrides fired are recorded in the return dict's
+            ``overrides_applied`` list with ``(stem, parameter,
+            genre_default, analyzer_rec, applied, reason)``. (#336)
 
     Returns:
-        Dict with processing results and metrics.
+        Dict with processing results, metrics, and (when analyzer_recs
+        is present or absent) an ``overrides_applied`` list.
     """
     stems_processed: list[dict[str, Any]] = []
+    overrides_applied: list[dict[str, Any]] = []
     result: dict[str, Any] = {
         'mode': 'stems',
         'stems_processed': stems_processed,
+        'overrides_applied': overrides_applied,
         'dry_run': dry_run,
     }
 
@@ -1899,11 +1960,45 @@ def mix_track_stems(stem_paths: dict[str, str | list[str]], output_path: Path | 
         # initialized empty so the `get('clicks_removed', 0)` fallback in
         # the append-below always has a value, even for non-declicking stems.
         stem_report: dict[str, Any] = {'clicks_removed': 0}
+
+        # #336: pull per-stem recommendations from analyzer (if any).
+        # INVARIANT: _ANALYZER_EQ_OVERRIDE_KEYS (used here for telemetry)
+        # MUST match the same whitelist _get_stem_settings applies in
+        # its merge below — otherwise overrides_applied would claim
+        # changes the merge didn't actually make.
+        stem_analyzer = (analyzer_recs or {}).get(stem_name) or {}
+        stem_recs = stem_analyzer.get("recommendations", {}) if stem_analyzer else {}
+        stem_issues = stem_analyzer.get("issues", []) if stem_analyzer else []
+
+        # Capture genre baseline BEFORE merging analyzer recs so we can
+        # report what the override changed.
+        if stem_recs:
+            baseline_settings = _get_stem_settings(stem_name, genre)
+            for key, rec_val in stem_recs.items():
+                if key in _ANALYZER_EQ_OVERRIDE_KEYS:
+                    # Issue tag that justifies THIS parameter specifically.
+                    # Look up only the tags that are valid justifications for
+                    # this key — prevents a multi-issue stem from reporting
+                    # the same (wrong) first-match reason on every entry.
+                    reason = next(
+                        (t for t in stem_issues
+                         if t in _ANALYZER_PARAM_REASONS.get(key, ())),
+                        None,
+                    )
+                    overrides_applied.append({
+                        "stem":           stem_name,
+                        "parameter":      key,
+                        "genre_default":  baseline_settings.get(key),
+                        "analyzer_rec":   rec_val,
+                        "applied":        rec_val,
+                        "reason":         reason,
+                    })
+
         if not dry_run:
             # Get settings and process. Every processor now accepts
             # `report` and accumulates `clicks_removed` via
             # `_apply_click_removal`, so the dispatch is uniform.
-            settings = _get_stem_settings(stem_name, genre)
+            settings = _get_stem_settings(stem_name, genre, analyzer_rec=stem_recs or None)
             processor = STEM_PROCESSORS[stem_name]
             data = processor(data, rate, settings, report=stem_report)
 

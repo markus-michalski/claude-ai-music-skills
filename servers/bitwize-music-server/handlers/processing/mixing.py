@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ async def polish_audio(
     use_stems: bool = True,
     dry_run: bool = False,
     track_filename: str = "",
+    analyzer_results: dict[str, Any] | None = None,
 ) -> str:
     """Polish audio tracks by processing stems or full mixes.
 
@@ -40,6 +42,14 @@ async def polish_audio(
             "01-track-name.wav"). In stems mode, matches the stem track
             directory with the same stem name. In full-mix mode, matches
             the WAV filename directly. Empty = process whole album.
+        analyzer_results: Optional pre-computed per-track/per-stem
+            analyzer output from `analyze_mix_issues`. When None and
+            `dry_run=False`, the analyzer is run internally so
+            recommendations still flow through. When None and
+            `dry_run=True`, the analyzer is skipped (dry-run is meant
+            to be fast) and `summary.overrides_applied` will be empty.
+            polish_album passes its existing analyze-stage output
+            here to avoid a duplicate run. (#336)
 
     Returns:
         JSON with per-track results, settings, and summary
@@ -73,6 +83,31 @@ async def polish_audio(
     output_dir = audio_dir / "polished"
     if not dry_run:
         output_dir.mkdir(exist_ok=True)
+
+    # #336: polish consumes analyzer per-stem recommendations. Auto-run
+    # the analyzer when the caller didn't provide results (so direct
+    # polish_audio calls still see the coupling). polish_album skips
+    # this by passing its existing analyze-stage output down.
+    if analyzer_results is None and not dry_run:
+        analyzer_json = await analyze_mix_issues(album_slug, genre)
+        analyzer_parsed = json.loads(analyzer_json)
+        if "error" in analyzer_parsed:
+            # Analyzer failure is non-fatal for polish — proceed without recs,
+            # but log the error so operators can see why overrides are empty.
+            logger.warning(
+                "polish_audio analyzer auto-run failed for album %r (genre=%r): %s",
+                album_slug, genre, analyzer_parsed.get("error"),
+            )
+        else:
+            analyzer_results = analyzer_parsed
+
+    # Build per-track analyzer rec lookup: {track_basename: {stem: {...}}}
+    per_track_recs: dict[str, dict[str, dict[str, Any]]] = {}
+    if analyzer_results:
+        for track_entry in analyzer_results.get("tracks", []):
+            # Stems-mode entry shape: {"track": name, "stems": {stem: analysis}}
+            if "stems" in track_entry and isinstance(track_entry["stems"], dict):
+                per_track_recs[track_entry["track"]] = track_entry["stems"]
 
     loop = asyncio.get_running_loop()
     track_results = []
@@ -118,12 +153,20 @@ async def polish_audio(
 
             _stem_output_dir = (output_dir / track_dir.name) if not dry_run else None
 
-            def _do_stems(sp: dict[str, str | list[str]], op: str, g: str | None, dr: bool, sd: Path | None) -> dict[str, Any]:
-                return mix_track_stems(sp, op, genre=g, dry_run=dr, stem_output_dir=sd)
+            track_recs = per_track_recs.get(track_dir.name) or None
+
+            def _do_stems(
+                sp: dict[str, str | list[str]], op: str, g: str | None,
+                dr: bool, sd: Path | None, ar: dict[str, Any] | None,
+            ) -> dict[str, Any]:
+                return mix_track_stems(
+                    sp, op, genre=g, dry_run=dr,
+                    stem_output_dir=sd, analyzer_recs=ar,
+                )
 
             result = await loop.run_in_executor(
                 None, _do_stems, stem_paths, out_path,
-                genre or None, dry_run, _stem_output_dir,
+                genre or None, dry_run, _stem_output_dir, track_recs,
             )
 
             if result:
@@ -167,6 +210,15 @@ async def polish_audio(
     if not track_results:
         return _safe_json({"error": "No tracks were processed."})
 
+    aggregated_overrides: list[dict[str, Any]] = []
+    for tr in track_results:
+        track_label = tr.get("track_name") or tr.get("filename") or ""
+        for entry in tr.get("overrides_applied", []):
+            # Explicit track label last so it can't be shadowed by an entry
+            # that ever gains a "track" field (defensive — entries don't
+            # currently carry one).
+            aggregated_overrides.append({**entry, "track": track_label})
+
     return _safe_json({
         "tracks": track_results,
         "settings": {
@@ -179,6 +231,7 @@ async def polish_audio(
             "tracks_processed": len(track_results),
             "mode": "stems" if use_stems else "full_mix",
             "output_dir": str(output_dir) if not dry_run else None,
+            "overrides_applied": aggregated_overrides,
         },
     })
 
@@ -226,6 +279,143 @@ def _resolve_analyzer_peak_ratio(
         settings = _get_full_mix_settings(g)
     raw = settings.get("click_peak_ratio", _ANALYZER_DEFAULT_PEAK_RATIO)
     return float(raw) if raw is not None else _ANALYZER_DEFAULT_PEAK_RATIO
+
+
+def _resolve_analyzer_thresholds() -> tuple[float, float]:
+    """Load (dark_high_mid_ratio, harsh_high_mid_ratio) from mix presets.
+
+    Falls back to (0.10, 0.25) when the analyzer preset block is absent.
+    Values are consumed by `_analyze_one` for the dark-track and
+    harsh-highmids branches respectively (#336).
+    """
+    try:
+        from tools.mixing.mix_tracks import load_mix_presets
+    except ImportError:
+        return 0.10, 0.25
+
+    presets = load_mix_presets()
+    analyzer = presets.get("defaults", {}).get("analyzer", {})
+    dark = float(analyzer.get("dark_high_mid_ratio", 0.10))
+    harsh = float(analyzer.get("harsh_high_mid_ratio", 0.25))
+    return dark, harsh
+
+
+def _build_analyzer(
+    dark_ratio: float = 0.10,
+    harsh_ratio: float = 0.25,
+) -> Callable[..., dict[str, Any]]:
+    """Return an `analyze_one` callable bound to the given thresholds.
+
+    The returned callable takes raw numpy audio data and produces the
+    per-file/per-stem analysis dict. Splitting it out of
+    `analyze_mix_issues` lets tests exercise the logic without mounting
+    an album directory.
+
+    Args:
+        dark_ratio: high_mid_ratio below which ``already_dark`` fires.
+        harsh_ratio: high_mid_ratio above which ``harsh_highmids`` fires.
+
+    Returns:
+        Callable ``analyze_one(data, rate, *, filename, stem_name, genre)``
+        producing a per-file analysis dict identical in shape to the
+        original ``_analyze_one`` output.
+    """
+    import numpy as np
+    from scipy import signal as sig
+
+    def analyze_one(
+        data: Any,
+        rate: int,
+        *,
+        filename: str,
+        stem_name: str | None = None,
+        genre: str = "",
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {"filename": filename, "issues": [], "recommendations": {}}
+
+        # Overall metrics
+        peak = float(np.max(np.abs(data)))
+        rms = float(np.sqrt(np.mean(data ** 2)))
+        result["peak"] = peak
+        result["rms"] = rms
+
+        # Noise floor estimate (quietest 10% of signal)
+        abs_signal = np.abs(data[:, 0])
+        sorted_abs = np.sort(abs_signal)
+        noise_floor = float(np.mean(sorted_abs[:len(sorted_abs) // 10]))
+        result["noise_floor"] = noise_floor
+        if noise_floor > 0.005:
+            result["issues"].append("elevated_noise_floor")
+            result["recommendations"]["noise_reduction"] = min(0.8, noise_floor * 100)
+
+        # Spectral analysis
+        freqs, psd = sig.welch(data[:, 0], rate, nperseg=min(4096, len(data)))
+
+        # Low-mid energy (150-400 Hz) — muddiness indicator
+        low_mid_mask = (freqs >= 150) & (freqs <= 400)
+        total_energy = float(np.sum(psd))
+        if total_energy > 0:
+            low_mid_ratio = float(np.sum(psd[low_mid_mask])) / total_energy
+            result["low_mid_ratio"] = low_mid_ratio
+            if low_mid_ratio > 0.35:
+                result["issues"].append("muddy_low_mids")
+                result["recommendations"]["mud_cut_db"] = -3.0
+
+        # High-mid energy (2-5 kHz) — harshness / darkness indicator
+        high_mid_mask = (freqs >= 2000) & (freqs <= 5000)
+        if total_energy > 0:
+            high_mid_ratio = float(np.sum(psd[high_mid_mask])) / total_energy
+            result["high_mid_ratio"] = high_mid_ratio
+            if high_mid_ratio > harsh_ratio:
+                result["issues"].append("harsh_highmids")
+                result["recommendations"]["high_tame_db"] = -2.0
+            elif high_mid_ratio < dark_ratio:
+                # #336: already-dark track — emit sentinel 0.0 to override
+                # genre-default high-shelf cuts (e.g. electronic's
+                # synth/keyboard/other stems at -1.5 dB @ 9 kHz) that
+                # would compound the darkness in polish.
+                result["issues"].append("already_dark")
+                result["recommendations"]["high_tame_db"] = 0.0
+
+        # Click detection (sudden amplitude spikes).
+        #
+        # Count 10 ms windows whose peak-to-RMS ratio exceeds `peak_ratio`
+        # — genuine digital clicks are single-sample discontinuities that
+        # spike a short window's crest factor well above 10×, while
+        # musical transients distribute energy across the window and stay
+        # below. The previous sample-wise detector was replaced in #323.
+        mono_col = data[:, 0]
+        window = max(int(rate * 0.01), 1)
+        n_windows = len(mono_col) // window
+        if n_windows > 0:
+            windows = mono_col[: n_windows * window].reshape(n_windows, window)
+            win_rms = np.sqrt(np.mean(windows ** 2, axis=1))
+            win_peak = np.max(np.abs(windows), axis=1)
+            active = win_rms > 1e-8
+            ratios = np.zeros(n_windows, dtype=np.float64)
+            np.divide(win_peak, win_rms, out=ratios, where=active)
+            peak_ratio = _resolve_analyzer_peak_ratio(stem_name, genre)
+            click_count = int(np.sum(ratios > peak_ratio))
+            result["click_count"] = click_count
+            if click_count > 10:
+                result["issues"].append("clicks_detected")
+                result["recommendations"]["click_removal"] = True
+
+        # Sub-bass rumble (< 30 Hz)
+        sub_mask = freqs < 30
+        if total_energy > 0:
+            sub_ratio = float(np.sum(psd[sub_mask])) / total_energy
+            result["sub_ratio"] = sub_ratio
+            if sub_ratio > 0.15:
+                result["issues"].append("sub_rumble")
+                result["recommendations"]["highpass_cutoff"] = 35
+
+        if not result["issues"]:
+            result["issues"].append("none_detected")
+
+        return result
+
+    return analyze_one
 
 
 async def analyze_mix_issues(
@@ -288,94 +478,20 @@ async def analyze_mix_issues(
     if not wav_files and not stem_track_map:
         return _safe_json({"error": f"No WAV files found in {audio_dir}"})
 
+    # Resolve analyzer thresholds once per run (preset-configurable, #336).
+    dark_ratio, harsh_ratio = _resolve_analyzer_thresholds()
+    analyze_core = _build_analyzer(dark_ratio=dark_ratio, harsh_ratio=harsh_ratio)
+
     def _analyze_one(
         wav_path: Path, stem_name: str | None = None,
     ) -> dict[str, Any]:
         data, rate = sf.read(str(wav_path))
         if len(data.shape) == 1:
             data = np.column_stack([data, data])
-
-        result: dict[str, Any] = {"filename": wav_path.name, "issues": [], "recommendations": {}}
-
-        # Overall metrics
-        peak = float(np.max(np.abs(data)))
-        rms = float(np.sqrt(np.mean(data ** 2)))
-        result["peak"] = peak
-        result["rms"] = rms
-
-        # Noise floor estimate (quietest 10% of signal)
-        abs_signal = np.abs(data[:, 0])
-        sorted_abs = np.sort(abs_signal)
-        noise_floor = float(np.mean(sorted_abs[:len(sorted_abs) // 10]))
-        result["noise_floor"] = noise_floor
-        if noise_floor > 0.005:
-            result["issues"].append("elevated_noise_floor")
-            result["recommendations"]["noise_reduction"] = min(0.8, noise_floor * 100)
-
-        # Spectral analysis (simplified: energy in frequency bands)
-        from scipy import signal as sig
-        freqs, psd = sig.welch(data[:, 0], rate, nperseg=min(4096, len(data)))
-
-        # Low-mid energy (150-400 Hz) — muddiness indicator
-        low_mid_mask = (freqs >= 150) & (freqs <= 400)
-        total_energy = float(np.sum(psd))
-        if total_energy > 0:
-            low_mid_ratio = float(np.sum(psd[low_mid_mask])) / total_energy
-            result["low_mid_ratio"] = low_mid_ratio
-            if low_mid_ratio > 0.35:
-                result["issues"].append("muddy_low_mids")
-                result["recommendations"]["mud_cut_db"] = -3.0
-
-        # High-mid energy (2-5 kHz) — harshness indicator
-        high_mid_mask = (freqs >= 2000) & (freqs <= 5000)
-        if total_energy > 0:
-            high_mid_ratio = float(np.sum(psd[high_mid_mask])) / total_energy
-            result["high_mid_ratio"] = high_mid_ratio
-            if high_mid_ratio > 0.25:
-                result["issues"].append("harsh_highmids")
-                result["recommendations"]["high_tame_db"] = -2.0
-
-        # Click detection (sudden amplitude spikes).
-        #
-        # Count 10 ms windows whose peak-to-RMS ratio exceeds `peak_ratio`
-        # — genuine digital clicks are single-sample discontinuities that
-        # spike a short window's crest factor well above 10×, while
-        # musical transients (vocal consonants, synth attacks, kick
-        # drums) distribute energy across the window and stay below.
-        # The previous sample-wise `|diff| > 6·σ(diff)` detector flagged
-        # tens of thousands of musical samples per stem on vocals/synth/
-        # bass and emitted false `click_removal` recommendations that
-        # the polish pipeline silently ignored (#323).
-        mono_col = data[:, 0]
-        window = max(int(rate * 0.01), 1)
-        n_windows = len(mono_col) // window
-        if n_windows > 0:
-            windows = mono_col[: n_windows * window].reshape(n_windows, window)
-            win_rms = np.sqrt(np.mean(windows ** 2, axis=1))
-            win_peak = np.max(np.abs(windows), axis=1)
-            active = win_rms > 1e-8
-            ratios = np.zeros(n_windows, dtype=np.float64)
-            np.divide(win_peak, win_rms, out=ratios, where=active)
-            peak_ratio = _resolve_analyzer_peak_ratio(stem_name, genre)
-            click_count = int(np.sum(ratios > peak_ratio))
-            result["click_count"] = click_count
-            if click_count > 10:
-                result["issues"].append("clicks_detected")
-                result["recommendations"]["click_removal"] = True
-
-        # Sub-bass rumble (< 30 Hz)
-        sub_mask = freqs < 30
-        if total_energy > 0:
-            sub_ratio = float(np.sum(psd[sub_mask])) / total_energy
-            result["sub_ratio"] = sub_ratio
-            if sub_ratio > 0.15:
-                result["issues"].append("sub_rumble")
-                result["recommendations"]["highpass_cutoff"] = 35
-
-        if not result["issues"]:
-            result["issues"].append("none_detected")
-
-        return result
+        return analyze_core(
+            data, rate, filename=wav_path.name,
+            stem_name=stem_name, genre=genre,
+        )
 
     track_analyses: list[dict[str, Any]] = []
     if stems_mode:
@@ -489,11 +605,15 @@ async def polish_album(
     }
 
     # --- Stage 2: Polish ---
+    # #336: pass the analysis-stage output into polish so analyzer
+    # recommendations become per-track overrides (no duplicate analysis
+    # run — polish_audio would otherwise re-invoke analyze_mix_issues).
     polish_json = await polish_audio(
         album_slug=album_slug,
         genre=genre,
         use_stems=use_stems,
         dry_run=False,
+        analyzer_results=analysis,
     )
     polish = json.loads(polish_json)
 
@@ -511,6 +631,7 @@ async def polish_album(
         "status": "pass",
         "tracks_processed": polish["summary"]["tracks_processed"],
         "output_dir": polish["summary"]["output_dir"],
+        "overrides_applied": polish["summary"].get("overrides_applied", []),
     }
 
     # --- Stage 3: Verify polished output (full QC suite) ---
