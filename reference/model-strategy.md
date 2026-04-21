@@ -173,7 +173,7 @@ These skills require reasoning and moderate creativity but follow established pa
 
 ---
 
-## Haiku 4.5 Skills (15 skills)
+## Haiku 4.5 Skills (17 skills)
 
 These skills perform simple, rule-based operations with no creative judgment.
 
@@ -197,6 +197,9 @@ These skills perform simple, rule-based operations with no creative judgment.
 
 ### new-album
 **Why Haiku**: Creates album directory structure from templates. Follows a template exactly: create folders, copy files, replace placeholders. No creative decisions.
+
+### promote-idea
+**Why Haiku**: Orchestrates a fixed 5-step pipeline (find idea → derive slug → create album → inject concept → update status). The MCP tool `promote_idea` does the real work; the skill just parses arguments, asks about the `documentary` flag when missing, and reports results. Deterministic — same inputs produce the same outputs. No creative judgment needed.
 
 ### setup
 **Why Haiku**: Detects Python environment and checks for installed dependencies. Rule-based checks: run commands, parse output, show appropriate installation instructions. No judgment - just environment detection and templated guidance.
@@ -252,8 +255,8 @@ Is it purely pattern matching, file operations, or static info?
 
 | Tier | Count | Percentage | Purpose |
 |------|-------|------------|---------|
-| Opus 4.6 | 7 | 13.2% | Music-defining output, high error cost |
-| Sonnet 4.6 | 30 | 58.8% | Reasoning, coordination, moderate creativity |
-| Haiku 4.5 | 15 | 29.4% | Rule-based operations, no judgment |
+| Opus 4.6 | 7 | 13.0% | Music-defining output, high error cost |
+| Sonnet 4.6 | 30 | 55.6% | Reasoning, coordination, moderate creativity |
+| Haiku 4.5 | 17 | 31.5% | Rule-based operations, no judgment |
 
 The plugin reserves Opus for skills where quality directly impacts the music or where errors have significant consequences. Most work happens at Sonnet tier. Haiku handles mechanical operations where speed matters more than nuance.

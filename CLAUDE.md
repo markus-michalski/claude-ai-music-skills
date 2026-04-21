@@ -144,6 +144,7 @@ Concept → Research → Write (+Suno Prompt) → [Refine] → QC/Verify → Gen
 
 - **Album mentioned** → `/bitwize-music:resume`
 - **"Make a new album"** → IMMEDIATELY use `/bitwize-music:new-album` BEFORE any discussion
+- **"Turn idea into album" / "promote [idea]"** → `/bitwize-music:promote-idea "<idea title>"` (one-shot: creates album from a Pending idea, injects concept, updates status)
 - **Writing lyrics** → apply `/bitwize-music:lyric-writer` expertise (auto-invokes suno-engineer)
 - **Refining/polishing lyrics** → `/bitwize-music:lyric-refiner` (post-writing multi-pass refinement)
 - **Planning album** → apply `/bitwize-music:album-conceptualizer` (7 planning phases required)

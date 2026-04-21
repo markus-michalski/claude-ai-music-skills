@@ -466,6 +466,8 @@ def parse_ideas_file(path: Path) -> dict[str, Any]:
         genre = _extract_bold_field(block_text, 'Genre')
         idea_type = _extract_bold_field(block_text, 'Type')
         status = _extract_bold_field(block_text, 'Status')
+        concept = _extract_bold_field(block_text, 'Concept')
+        promoted_to = _extract_bold_field(block_text, 'Promoted To')
 
         # Normalize status - take first value if it's a choice list
         if status and '|' in status:
@@ -479,6 +481,8 @@ def parse_ideas_file(path: Path) -> dict[str, Any]:
             'genre': genre or '',
             'type': idea_type or '',
             'status': status,
+            'concept': concept or '',
+            'promoted_to': promoted_to or '',
         })
 
         counts[status] = counts.get(status, 0) + 1

@@ -54,7 +54,7 @@ Then run `/bitwize-music:setup` to detect your environment and install dependenc
 
 This is where the engineering lives. The plugin is a case study in how far you can push Claude Code's plugin system.
 
-### Skill System (53 Skills)
+### Skill System (54 Skills)
 
 Each skill is a self-contained markdown file with a YAML frontmatter that declares its model, description, and when it should activate. Skills range from simple clipboard operations to multi-step creative workflows. Claude routes to skills automatically based on context, or you invoke them directly with `/bitwize-music:<name>`.
 
@@ -70,7 +70,7 @@ Skills declare which Claude model they need. Creative work that directly impacts
 |------|-------|--------|-----------|
 | Creative | Opus 4.6 | 6 | Lyrics, Suno prompts, album concepts, legal/verification research — output quality defines the music |
 | Reasoning | Sonnet 4.6 | 29 | Research coordination, pronunciation analysis, most workflows |
-| Mechanical | Haiku 4.5 | 17 | Imports, validation, clipboard, help — speed over creativity |
+| Mechanical | Haiku 4.5 | 18 | Imports, validation, clipboard, help — speed over creativity |
 
 This project pushes Claude Code hard — multi-agent research, real-time audio analysis, sub-agent orchestration across model tiers. It works best on the Max plan. The standard Pro plan will hit rate limits during multi-track sessions.
 

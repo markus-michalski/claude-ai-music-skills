@@ -20,6 +20,7 @@ Quick-reference guide for finding the right skill for any task.
 | I need to... | Use this skill |
 |--------------|----------------|
 | ...start a new album | `/new-album <name> <genre>` |
+| ...turn an existing idea into an album | `/promote-idea "<idea title>"` |
 | ...plan album concept and tracklist | `/album-conceptualizer` |
 | ...continue working on an existing album | `/resume <album-name>` |
 | ...see album progress at a glance | `/album-dashboard <album-name>` |
@@ -136,6 +137,7 @@ Quick-reference guide for finding the right skill for any task.
 | [`pre-generation-check`](/skills/pre-generation-check/SKILL.md) | Final pre-generation checkpoint (6 gates) | Validating all requirements before Suno generation |
 | [`promo-director`](/skills/promo-director/SKILL.md) | Generate promo videos for social media | Creating 15s vertical videos for Instagram/Twitter |
 | [`promo-reviewer`](/skills/promo-reviewer/SKILL.md) | Review and polish social media copy in promo/ files | Interactive post-by-post review before release |
+| [`promote-idea`](/skills/promote-idea/SKILL.md) | Convert a Pending idea from IDEAS.md into a full album (one-shot) | Moving an idea from backlog to active production |
 | [`promo-writer`](/skills/promo-writer/SKILL.md) | Generate platform-specific social media copy from album context | Populating promo/ templates with copy for each platform |
 | [`pronunciation-specialist`](/skills/pronunciation-specialist/SKILL.md) | Scan lyrics for pronunciation risks | Catching homographs and tricky words before Suno |
 | [`rename`](/skills/rename/SKILL.md) | Rename albums or tracks with path updates | Changing album/track names after creation |
@@ -382,7 +384,7 @@ Skills are assigned to models based on task complexity. See [model-strategy.md](
 - `/verify-sources` - Human verification gate
 - `/voice-checker` - Advisory review for AI-sounding patterns
 
-### Haiku 4.5 (Pattern Matching — 16 skills)
+### Haiku 4.5 (Pattern Matching — 17 skills)
 - `/about` - Static information
 - `/album-dashboard` - Progress dashboard
 - `/clipboard` - Copy to clipboard
@@ -394,6 +396,7 @@ Skills are assigned to models based on task complexity. See [model-strategy.md](
 - `/new-album` - Directory creation
 - `/next-step` - Workflow routing
 - `/pre-generation-check` - Gate validation
+- `/promote-idea` - Idea → album orchestration
 - `/rename` - File/directory renaming
 - `/setup` - Environment detection
 - `/skill-model-updater` - Pattern replacement
