@@ -112,6 +112,18 @@ class MasterAlbumCtx:
     warnings: list[Any] = field(default_factory=list)
     notices: list[str] = field(default_factory=list)
 
+    # Per-track ADM ceiling machinery (populated during ADM loop; empty
+    # on first cycle). Absent filename = track uses effective_ceiling.
+    track_ceilings: dict[str, float] = field(default_factory=dict)
+    # Populated by _stage_analysis — tracks whose high_mid band_energy
+    # < 10 %. ADM ceiling tightening skips these (tightening dark
+    # material makes spectral balance worse, not ADM compliance better).
+    dark_tracks: set[str] = field(default_factory=set)
+    # When set, _stage_mastering only (re-)masters filenames in the set
+    # and leaves existing mastered files alone. None = master every
+    # wav in ctx.wav_files (cycle 1 behavior).
+    remaster_filenames: set[str] | None = None
+
     # ── stage 1 (pre-flight) ─────────────────────────────────────────────────
     audio_dir: Path | None = None
     source_dir: Path | None = None
@@ -370,6 +382,21 @@ async def _stage_analysis(ctx: MasterAlbumCtx) -> str | None:
         "tinny_tracks": tinny_tracks,
     }
     ctx.analysis_results = analysis_results
+
+    # Dark-track detection for ADM ceiling exclusion. analyze_track
+    # computes high_mid band_energy; is_dark = band_energy < 10 % (matches
+    # the mix analyzer's already_dark threshold).
+    ctx.dark_tracks = {
+        r["filename"]
+        for r in ctx.analysis_results
+        if r.get("is_dark") is True
+    }
+    if ctx.dark_tracks:
+        logger.info(
+            "Analysis: %d dark track(s) — excluded from ADM tightening: %s",
+            len(ctx.dark_tracks), sorted(ctx.dark_tracks),
+        )
+
     return None
 
 
@@ -645,9 +672,16 @@ async def _stage_mastering(ctx: MasterAlbumCtx) -> str | None:
 
     Reads ctx: album_slug, audio_dir, wav_files, effective_lufs,
                effective_ceiling, effective_highmid, effective_highs,
-               effective_compress, effective_preset, source_dir, targets, loop
+               effective_compress, effective_preset, source_dir, targets, loop,
+               remaster_filenames, track_ceilings
     Sets ctx:  output_dir, mastered_files
     Returns: None on success, failure JSON if no tracks processed.
+
+    Selective remaster: when ctx.remaster_filenames is a set, only those
+    filenames are (re-)mastered; the rest are skipped and their existing
+    mastered files are preserved in output_dir (and thus in mastered_files).
+    Per-track ceiling: ctx.track_ceilings[fname] overrides effective_ceiling
+    for individual tracks; absent entries fall back to effective_ceiling.
     """
     import shutil as _shutil
 
@@ -673,14 +707,25 @@ async def _stage_mastering(ctx: MasterAlbumCtx) -> str | None:
         .get("tracks", {})
     )
 
+    remaster_set = ctx.remaster_filenames
+
     try:
         master_results = []
         for wav_file in ctx.wav_files:
-            output_path = staging_dir / wav_file.name
+            fname = wav_file.name
+
+            # Selective remaster: skip tracks not in the requested set.
+            if remaster_set is not None and fname not in remaster_set:
+                continue
+
+            output_path = staging_dir / fname
             track_stem = wav_file.stem
             track_slug = _normalize_slug(track_stem)
             track_meta = album_tracks.get(track_slug, {})
             fade_out_val = track_meta.get("fade_out")
+
+            # Per-track ceiling: fall back to album-wide effective_ceiling.
+            per_track_ceiling = ctx.track_ceilings.get(fname, ctx.effective_ceiling)
 
             def _do_master(
                 in_path: Path,
@@ -703,11 +748,11 @@ async def _stage_mastering(ctx: MasterAlbumCtx) -> str | None:
 
             result = await ctx.loop.run_in_executor(
                 None, _do_master, wav_file, output_path,
-                ctx.effective_lufs, ctx.effective_ceiling, fade_out_val,
+                ctx.effective_lufs, per_track_ceiling, fade_out_val,
                 ctx.effective_compress, ctx.effective_preset,
             )
             if result and not result.get("skipped"):
-                result["filename"] = wav_file.name
+                result["filename"] = fname
                 master_results.append(result)
     except Exception:
         if staging_dir.exists():
