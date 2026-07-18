@@ -952,7 +952,7 @@ class TestRemainingToolsCoverage:
     def test_resolve_path_tracks(self, integration_env):
         """resolve_path tracks includes /tracks suffix."""
         result = json.loads(_run(server.resolve_path("tracks", "integration-test-album")))
-        assert result["path"].endswith("/tracks")
+        assert Path(result["path"]).as_posix().endswith("/tracks")
 
     def test_resolve_path_overrides(self, integration_env):
         """resolve_path overrides resolves from config."""
@@ -1830,7 +1830,8 @@ class TestResolvePathExtended:
     def test_documents_path(self, integration_env):
         """resolve_path documents resolves with full mirrored structure."""
         result = json.loads(_run(server.resolve_path("documents", "integration-test-album")))
-        assert "/artists/test-artist/albums/electronic/integration-test-album" in result["path"]
+        assert ("/artists/test-artist/albums/electronic/integration-test-album"
+                in Path(result["path"]).as_posix())
         assert result["genre"] == "electronic"
 
     def test_invalid_path_type(self, integration_env):
@@ -2937,6 +2938,40 @@ class TestCreateTrackIntegration:
         result = json.loads(_run(server.get_track("integration-test-album", "04-new-track")))
         assert result["found"] is True
         assert result["track"]["title"] == "New Track"
+
+    def test_created_track_immediately_visible_without_manual_rebuild(
+        self, integration_env, monkeypatch
+    ):
+        """create_track refreshes the cache so the new track is found at once.
+
+        Regression: create_track wrote the track file but never refreshed the
+        server's in-memory state cache, so get_track / update_track_field /
+        list_tracks resolved against stale state and returned "not found" until
+        the user ran rebuild_state manually. Mirrors create_album_structure,
+        which rebuilds after creating an album.
+        """
+        monkeypatch.setattr(server, "PLUGIN_ROOT", PROJECT_ROOT)
+
+        created = json.loads(_run(server.create_track(
+            "integration-test-album", "04", "Fresh Track"
+        )))
+        assert created["created"] is True
+        track_slug = created["track_slug"]  # "04-fresh-track"
+
+        # No manual rebuild_state() here — the new track must already be visible.
+        got = json.loads(_run(server.get_track("integration-test-album", track_slug)))
+        assert got["found"] is True, (
+            "create_track must refresh the cache so the new track is "
+            f"immediately visible without a manual rebuild; got: {got}"
+        )
+        assert got["track"]["title"] == "Fresh Track"
+
+        # And it shows up in a fresh cache-backed list_tracks read.
+        listed = json.loads(_run(server.list_tracks("integration-test-album")))
+        slugs = [t["slug"] for t in listed["tracks"]]
+        assert track_slug in slugs, (
+            f"new track {track_slug!r} should appear in list_tracks; got {slugs}"
+        )
 
     def test_reject_duplicate_track(self, integration_env, monkeypatch):
         """Cannot create track with same number+slug as existing."""

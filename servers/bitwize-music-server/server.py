@@ -76,14 +76,20 @@ except ImportError:
     print("Install with ONE of these methods:", file=sys.stderr)
     print("", file=sys.stderr)
     print("  1. User install (recommended):", file=sys.stderr)
-    print("     pip install --user 'mcp[cli]>=1.2.0' pyyaml", file=sys.stderr)
+    print('     pip install --user "mcp[cli]>=1.2.0" pyyaml', file=sys.stderr)
     print("", file=sys.stderr)
     print("  2. Using pipx:", file=sys.stderr)
     print("     pipx install mcp", file=sys.stderr)
     print("", file=sys.stderr)
     print("  3. Virtual environment:", file=sys.stderr)
-    print("     python3 -m venv ~/.bitwize-music/venv", file=sys.stderr)
-    print("     ~/.bitwize-music/venv/bin/pip install 'mcp[cli]>=1.2.0' pyyaml", file=sys.stderr)
+    if sys.platform == "win32":
+        _venv_create_hint = r'py -3 -m venv "%USERPROFILE%\.bitwize-music\venv"'
+        _venv_python_hint = r"%USERPROFILE%\.bitwize-music\venv\Scripts\python.exe"
+    else:
+        _venv_create_hint = "python3 -m venv ~/.bitwize-music/venv"
+        _venv_python_hint = "$HOME/.bitwize-music/venv/bin/python3"
+    print(f"     {_venv_create_hint}", file=sys.stderr)
+    print(f'     "{_venv_python_hint}" -m pip install "mcp[cli]>=1.2.0" pyyaml', file=sys.stderr)
     print("", file=sys.stderr)
     print("After installing, restart Claude Code to reload the plugin.", file=sys.stderr)
     print("=" * 70, file=sys.stderr)
@@ -416,7 +422,6 @@ from handlers._shared import (  # noqa: F401
     _SECTION_NAMES,
     _SECTION_TAG_RE,
     _STREAMING_PLATFORMS,
-    _get_valid_genres,
     _WORD_TOKEN_RE,
     ALBUM_COMPLETE,
     ALBUM_CONCEPT,
@@ -438,6 +443,7 @@ from handlers._shared import (  # noqa: F401
     _extract_markdown_section,
     _find_album_or_error,
     _find_wav_source_dir,
+    _get_valid_genres,
     _normalize_slug,
     _resolve_audio_dir,
     _safe_json,

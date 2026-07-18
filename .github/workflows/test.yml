@@ -181,10 +181,24 @@ jobs:
         "
 
   test:
-    name: Tests
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     # Skip for fork PRs — untrusted code could modify requirements/test files
     if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            timeout: 30
+          - os: macos-latest
+            timeout: 45
+          - os: windows-latest
+            timeout: 60
+    env:
+      # Test harness has encoding-less text I/O; product code is explicit UTF-8 — this pins the test env on Windows runners whose locale is cp1252.
+      PYTHONUTF8: "1"
 
     steps:
     - name: Checkout code
@@ -196,10 +210,22 @@ jobs:
         python-version: '3.11'
         cache: 'pip'
 
-    - name: Install system dependencies
+    - name: Install system dependencies (Linux)
+      if: runner.os == 'Linux'
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y --no-install-recommends ffmpeg
+
+    - name: Install system dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install ffmpeg
+
+    # ffmpeg is installed on all three OSes so the ffmpeg-gated audio tests
+    # run everywhere; AnthemScore/MuseScore remain WSL-recommended externals.
+    - name: Install system dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: choco install ffmpeg -y --no-progress
 
     - name: Install test dependencies
       run: |
@@ -207,16 +233,89 @@ jobs:
         pip install -r requirements-test.txt
         pip install -r requirements.txt
 
+    - name: Import smoke test (fcntl regression, issue 476)
+      # Fast, legible failure signal for issue #476 regressions.
+      if: runner.os == 'Windows'
+      run: |
+        python -c "import tools.state.indexer; print('[OK] tools.state.indexer imports on Windows')"
+
     - name: Run tests with coverage
+      if: runner.os == 'Linux'
       run: |
         python -m pytest tests/ -v --tb=short --cov=tools --cov=servers --cov-report=term-missing --cov-report=html:coverage-html --cov-fail-under=75
 
+    - name: Run tests
+      # Coverage gate is ubuntu-only to avoid cross-platform variance from
+      # win32/darwin platform branches.
+      if: runner.os != 'Linux'
+      run: |
+        python -m pytest tests/ --tb=short -n auto
+
     - name: Upload coverage report
+      if: runner.os == 'Linux'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
       with:
         name: coverage-report
         path: coverage-html/
         retention-days: 14
+
+  mcp-boot:
+    name: MCP Server Boot (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Skip for fork PRs — untrusted code could modify requirements/test files
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    # Simulates the documented user install (requirements.txt header):
+    #   python3 -m venv ~/.bitwize-music/venv && pip install -r requirements.txt
+    # The venv path is computed with Path.home() so it agrees byte-for-byte
+    # with run.py's venv discovery (on Windows, Path.home() uses USERPROFILE
+    # and ignores HOME, so a shell $HOME would be ambiguous here).
+    - name: Create user-style venv and install pinned requirements
+      run: |
+        python -c "import pathlib, venv; venv.create(pathlib.Path.home() / '.bitwize-music' / 'venv', with_pip=True)"
+        VENV_PY="$(python -c "import pathlib, sys; d = pathlib.Path.home() / '.bitwize-music' / 'venv'; print((d / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python3')).as_posix())")"
+        "$VENV_PY" -m pip install --upgrade pip
+        "$VENV_PY" -m pip install -r requirements.txt
+
+    # Boot the server through the SAME launcher .mcp.json invokes, and drive a
+    # real stdio JSON-RPC handshake. Catches process-level startup failures
+    # (e.g. #476) that the in-process unit suite with its mocked FastMCP cannot
+    # see. .mcp.json's command is the extensionless mcp-launch, which Claude Code
+    # runs as the POSIX shebang script here and resolves to mcp-launch.cmd on
+    # Windows (validated against real Claude Code on a Windows VM).
+    - name: Boot check via mcp-launch (POSIX)
+      if: runner.os != 'Windows'
+      env:
+        CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}
+      run: |
+        python tests/e2e/mcp_boot_check.py --timeout 120 --call-tool health_check --scenario state-workflow -- \
+          "$GITHUB_WORKSPACE/servers/bitwize-music-server/mcp-launch"
+
+    - name: Boot check via mcp-launch.cmd (Windows)
+      if: runner.os == 'Windows'
+      env:
+        CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}
+      run: |
+        python tests/e2e/mcp_boot_check.py --timeout 240 --call-tool health_check --scenario state-workflow -- \
+          "$GITHUB_WORKSPACE/servers/bitwize-music-server/mcp-launch.cmd"
 
   lint:
     name: Lint
@@ -242,6 +341,12 @@ jobs:
       run: |
         ruff check tools/ servers/
 
+    # PLW1514 (unspecified-encoding) is preview-only, so it runs as a
+    # dedicated scoped invocation instead of enabling preview repo-wide
+    - name: Run ruff encoding check (PLW1514)
+      run: |
+        ruff check tools/ servers/ --select PLW1514 --preview
+
     - name: Run bandit security linter
       run: |
         bandit -r tools/ servers/ -ll -q -s B108,B608
@@ -249,6 +354,16 @@ jobs:
     - name: Run mypy type checker
       run: |
         mypy
+
+    # These two catch platform-gated typing drift (fcntl/msvcrt) without
+    # needing a Windows runner.
+    - name: Run mypy (win32 cross-check)
+      run: |
+        mypy --platform win32
+
+    - name: Run mypy (darwin cross-check)
+      run: |
+        mypy --platform darwin
 
     - name: Validation summary
       run: |
@@ -281,3 +396,68 @@ jobs:
         # Unfixed CVEs are ignored here and tracked for follow-up.
         pip-audit -r requirements.txt -r requirements-test.txt \
           --ignore-vuln CVE-2026-4539  # pygments 2.19.2 - no fix available yet
+
+  plugin-install-smoke:
+    name: Plugin Install Smoke
+    runs-on: ubuntu-latest
+    # Skip for fork PRs — untrusted code could modify the plugin content this
+    # job feeds to the claude CLI (guard consistent with the other jobs)
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+    # Official install method from the install page — no node/npm dependency.
+    # install.sh accepts an optional target (stable|latest|X.Y.Z); we pass
+    # none and take its default (latest) deliberately: this job's purpose is
+    # "what users install today". The installer lands a symlink at
+    # ~/.local/bin/claude (verified from its own output: "Location:
+    # ~/.local/bin/claude") and that dir is not on the runner's PATH, so add
+    # it via GITHUB_PATH for the following steps.
+    - name: Install Claude Code CLI
+      run: |
+        curl -fsSL https://claude.ai/install.sh | bash
+        test -x "$HOME/.local/bin/claude"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    # The plugin CLI needs no Claude auth — proven empirically by the
+    # capability probes on PR #485: every plugin subcommand (marketplace
+    # add/list, install, list) runs unauthenticated with exit 0, with no
+    # ANTHROPIC_API_KEY / OAuth token anywhere in the environment. No
+    # interactive session is ever started, so nothing here consumes tokens.
+    #
+    # `marketplace add ./` registers THIS CHECKOUT as the marketplace (the
+    # CLI accepts owner/repo, URLs, or a ./path — a bare `.` is rejected),
+    # so the install exercises the PR's own plugin content. The remote
+    # `marketplace add owner/repo` form would clone the default branch and
+    # test released content instead of this PR.
+    - name: Add this checkout as a marketplace and install the plugin
+      run: |
+        claude --version
+        claude plugin marketplace add ./
+        claude plugin install bitwize-music@bitwize-music
+
+    - name: Assert plugin is listed as enabled
+      run: |
+        claude plugin list | tee plugin-list.txt
+        grep -q "bitwize-music@bitwize-music" plugin-list.txt
+        grep -q "✔ enabled" plugin-list.txt
+        echo "[OK] plugin listed and enabled"
+
+    # Local-path marketplaces don't populate ~/.claude/plugins/marketplaces/
+    # (no clone needed) — the installed content lands in the versioned cache
+    # dir, which is what users' sessions actually load.
+    - name: Assert installed content matches this checkout
+      run: |
+        VERSION=$(python3 -c "import json; print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+        CACHE_DIR="$HOME/.claude/plugins/cache/bitwize-music/bitwize-music/$VERSION"
+        echo "Expecting installed cache at: $CACHE_DIR"
+        test -d "$CACHE_DIR"
+        test -f "$CACHE_DIR/.mcp.json"
+        REPO_SKILLS=$(find skills/ -mindepth 1 -maxdepth 1 | wc -l)
+        INSTALLED_SKILLS=$(find "$CACHE_DIR/skills/" -mindepth 1 -maxdepth 1 | wc -l)
+        echo "skills: repo=$REPO_SKILLS installed=$INSTALLED_SKILLS"
+        test "$REPO_SKILLS" -eq "$INSTALLED_SKILLS"
+        echo "[OK] version $VERSION installed with $INSTALLED_SKILLS skills and .mcp.json"

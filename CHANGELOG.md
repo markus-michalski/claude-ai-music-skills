@@ -6,6 +6,69 @@ This project uses [Conventional Commits](https://conventionalcommits.org/) and [
 
 ## [Unreleased]
 
+### Fixed
+- **Transient Windows contention on the state cache is no longer misclassified as corruption** (#489) — while a concurrent `write_state` was mid-`os.replace`, a reader's `open(state.json)` transiently raises `PermissionError` (`WinError 5` / `WinError 32`); `read_state` caught it under a broad `except (json.JSONDecodeError, OSError)` and treated it as *corruption* — copying the good `state.json` to a spurious `state.<ts>.corrupt` backup and returning empty `{}`, so a session silently lost its whole state view over a normal cross-process blip (two Claude sessions, an AV scan). This is the reader-side counterpart to #488, and the reason its writer-only retry didn't settle the multi-process lock stress test on the windows-latest CI leg. The read now retries the transient open with the same bounded Windows-only budget as the writer; quarantine is reserved exclusively for *genuine corruption* (malformed JSON, or JSON that decodes to the wrong shape), and any `OSError` — a surviving sharing violation, or a real permission/disk fault — re-raises instead of quarantining good state or returning `{}`. POSIX behavior is unchanged.
+- **Concurrent/AV-contended state writes no longer fail spuriously on Windows** (#488) — `write_state` renamed its temp file over `state.json` with a bare `os.replace`, which on Windows raises `PermissionError` (`WinError 5` ERROR_ACCESS_DENIED / `WinError 32` ERROR_SHARING_VIOLATION) whenever another process holds the target open: a lock-free `read_state`, a second Claude session, or a transient antivirus scan. POSIX rename-over-open-file is atomic and never hits this, so the multi-process lock stress test (#486) passed on POSIX but flaked on the windows-latest CI leg. The replace is now wrapped in a bounded, Windows-only retry (10 attempts, ~10ms→100ms backoff, ~1s total) that retries only those two transient sharing-violation errors — still under the write lock so no writer interleaves — then re-raises so a genuinely stuck file fails loudly. POSIX behavior is byte-for-byte unchanged.
+- **`create_track` now refreshes the state cache so new tracks are immediately usable** — `create_track` wrote the track markdown to disk but never rebuilt the server's in-memory state, so `get_track`, `update_track_field`, and `list_tracks` returned "not found" for the just-created track until the user ran `rebuild_state` by hand. It now calls `_shared.cache.rebuild()` after a successful write, mirroring `create_album_structure`; a rebuild failure is logged as a non-fatal warning (the file is already written) rather than turning a successful create into an error.
+- **Mastering ceiling-guard pull-down no longer crashes on Windows** (#480) — `apply_pull_down_db` fsynced its temp WAV through a handle opened `"rb"`; on Windows `os.fsync()` calls `FlushFileBuffers`, which requires write access, so every pull-down raised `OSError(EBADF)` (`CeilingGuardError: write failed ... Bad file descriptor`). The handle now opens `"rb+"` — the file already exists and nothing is truncated, so POSIX fsync semantics are unchanged.
+- **Windows slug sanitization for NTFS-forbidden title characters** (#480) — `_normalize_slug` passed `<>:"|?*` straight through, so a title like `Say "Goodbye"` produced an unwritable filename (`01-say-"goodbye".md`) and track creation failed with no `created` key. These characters are now stripped from slugs on Windows only; POSIX slugs are byte-identical to before.
+- **MCP server now starts on Windows** (#476) — `tools/state/indexer.py` imported the Unix-only `fcntl` module unconditionally, crashing `server.py` on import so no MCP tools loaded on Windows. State-cache locking is now platform-gated: `fcntl.flock` on Unix, `msvcrt.locking` on Windows, behind shared `_flock_nb`/`_funlock` helpers. The lock file opens in append mode ('w' truncation fails on Windows while the byte-range lock is held), locking tests are platform-neutral, and new windows-latest and macos-latest CI jobs guard the module import, the locking tests, and (macOS) that the pinned requirements install on Apple Silicon. Reported by @Memshik42.
+- **MCP server now launches on Windows via `.mcp.json`** (#476) — the launch command was `${HOME}/.bitwize-music/venv/bin/python3`, which fails twice on Windows: `${HOME}` is unset there (Windows uses `USERPROFILE`, so Claude Code left the literal `${HOME}` in place) and the venv interpreter lives at `Scripts\python.exe`, not `bin/python3`. Because Claude Code has no per-OS command mechanism and no universal `python`/`python3` name exists (Windows `python3` is a Store stub; many POSIX systems lack bare `python`), the fix is a launcher pair — `servers/bitwize-music-server/mcp-launch` (POSIX shebang) and `mcp-launch.cmd` (Windows) — referenced by its extensionless name in `.mcp.json`; Claude Code runs the shell script on POSIX and resolves the `.cmd` on Windows. Validated end-to-end against real Claude Code (2.1.210) on Windows 11: the installed plugin's server reports ✓ Connected. Reported by @Memshik42.
+
+### Added
+- **Real-service integration tests in CI (Postgres + SeaweedFS/S3)** — a new `integration.yml` workflow and gated `tests/integration/` suite exercise the two surfaces that were mock-only until now against actual services. The `db_*` MCP tools run against a real PostgreSQL service container (full tweet lifecycle — db_init → create → list → update → search → stats → delete — plus db_init idempotency); the cloud uploader runs against a real SeaweedFS S3 gateway (a config → `get_s3_client` → `retry_upload`/`upload_file` round-trip, verified via boto3, plus a dry-run no-op check). Both are double-gated behind the `integration` marker and a `BITWIZE_INTEGRATION` env guard, so `pytest tests/` and the 3-OS matrix collect-and-skip cleanly with no services present. Closes two maintainer-identified test gaps (real Postgres, real S3-compatible storage).
+- **Generic S3-compatible endpoint support in the cloud uploader** — `cloud.s3.endpoint_url` points the `s3` provider at any S3-compatible service (SeaweedFS, MinIO, Backblaze B2, Wasabi, self-hosted), not just AWS. When set, `get_s3_client` builds the boto3 client against that endpoint with path-style addressing and request checksums only when the API requires them (compatibility with gateways that lack virtual-host buckets or reject the newer `x-amz-checksum-*` trailers). AWS-native S3 (no `endpoint_url`) and Cloudflare R2 are unchanged.
+- **ffmpeg-based audio processing now CI-tested on native Windows** (#484) — the Windows test leg installs ffmpeg via Chocolatey, so the ffmpeg-gated audio tests (ADM validation, codec preview, mastering samples) run on all three OSes instead of skipping on windows-latest; they passed on the first run with no product changes needed. Reverses the original support-tier decision that kept the Windows leg ffmpeg-less. Native Windows audio remains best-effort; AnthemScore/MuseScore (sheet music) stay WSL2-recommended.
+- **Plugin-install smoke test in PR CI and nightly WSL2 suite** (#485) — two permanent jobs distilled from empirical capability probes. `plugin-install-smoke` (test.yml) installs the Claude Code CLI with no Claude auth and runs the documented marketplace-add + install flow against the PR's own checkout (local-path marketplace via `claude plugin marketplace add ./`), asserting the plugin lands enabled in the versioned cache with all skills and `.mcp.json` — the probes established the plugin CLI has no auth wall, so this costs ~1 minute and no secrets. `wsl2-suite` (nightly.yml) runs the full pinned install and test suite inside WSL2 (Ubuntu-24.04, Python 3.12) on windows-latest — the documented Windows support path — benchmarked by the probes at 4256 passed / 28 skipped in ~11.5 min inside WSL. Probe by-catch documented in the workflow: setting `WSL_UTF8=1` at job level breaks setup-wsl v7.0.0's WSL version detection.
+- **End-to-end MCP server boot test in CI** (#476) — new `mcp-boot` matrix job (ubuntu/windows/macos) simulates a real user install: it builds the documented `~/.bitwize-music/venv` from the pinned requirements, launches the server through the same `mcp-launch`/`mcp-launch.cmd` wrapper `.mcp.json` invokes, and drives a real stdio JSON-RPC handshake (`initialize` → `notifications/initialized` → `tools/list` → `health_check`) with a stdlib-only checker (`tests/e2e/mcp_boot_check.py`). Guards against process-level startup failures like #476 that the in-process unit suite — which mocks FastMCP — cannot catch. The checker fails on any non-JSON stdout line, so a stray print that would corrupt the stdio transport is caught too.
+
+## [0.99.0] - 2026-07-13
+
+### Fixed
+- **Help index completed, validator policy re-encoded** (#473) — `skills/help/SKILL.md` now lists all 53 skills (9 were missing); `tools/validate_help_completeness.py` enforces the help-comprehensive / CLAUDE.md-curated contract (CLAUDE.md references are ghost-checked, not completeness-checked), with new unit tests; contributor checklist updated to match
+- **Ruff config consolidated in pyproject** (#468, #470) — deleted `ruff.toml`, which had silently shadowed the extended `[tool.ruff]` ruleset (E,F,I,UP,B,SIM,RUF at py311) since March; fixed all 52 findings the active config surfaced with zero new suppressions
+- **Plugin-suite findings resolved** (#471, #472) — `allowed-tools:` frontmatter added to the last two skills missing it; `qc_tracks.py` zip encodes its equal-length invariant with `strict=True`; promotion docstrings corrected to Python 3.11+; all 141 test definitions audited against the current repo (34 retargeted, 4 dropped with audit trail)
+- **Audio-path regression checks retargeted** (#474) — the two remaining pre-refactor checks now verify the guards where they actually live (CLAUDE.md pattern block; `skills/import-audio` with the `resolve_path` requirement)
+
+## [0.98.0] - 2026-07-11
+
+### Added
+- **Root `FAQ.md`** (#466) — integration stance, commercial rights, and project basics, linked from README
+
+### Fixed
+- **Corrected the documented Python floor to 3.11+** (#467) — the MCP server imports `datetime.UTC`, a 3.11+ name, so the old "3.10+" claim was never true
+
+## [0.97.0] - 2026-07-07
+
+### Added
+- **Suno V5.5 mid-year knowledge refresh** (#460, #461). Documented the June 2026
+  stem-separation overhaul (Auto Split / Split from Mix / Advanced Split — ~100
+  instruments, generative regeneration); clarified Exclude Styles as a dedicated
+  Pro/Premier field vs. an inline fallback and added group-vocal suppression
+  vocabulary; noted Audio Influence ~0.70–0.85 when using Voices. A new Suno
+  reference CHANGELOG entry records the research sources and a "Refuted / Not
+  Adopted" list of widely-circulated V5.5 prompt-grammar claims that failed
+  verification (4-7-as-a-rule, four-layer templates, per-section parameterized
+  tags, inline style-field negatives).
+
+### Changed
+- **Style Box descriptor gate reframed** (#460, #461). The advisory pre-generation
+  gate now flags genuine synonym-pile bloat (>12 descriptors) instead of >7, and no
+  longer mislabels sparse boxes as "within the 4-7 sweet spot." The old 4-7 cutoff
+  was an unvetted single-source rule that fired on the majority of real
+  (~10-descriptor) style boxes; guidance across `suno-engineer`, `v5-best-practices`,
+  and `pre-generation-check` is reframed so 4-7 reads as a starting heuristic, not a
+  Suno rule.
+- **Performance Cues standardized** to a short comma-free phrase (`[Outro - chant
+  fading]`); the gate detects cues by the ` - ` separator, so gate behavior is
+  unchanged.
+
+### Fixed
+- **Corrected the V5 release date** in the V4→V5 migration guide (October 2024 →
+  September 2025) to match the repo's own Suno Studio / v5-generation dating, and
+  hedged the unverified "V5.5 honors subtle descriptors better" claim that had been
+  stated as fact.
+
 ## [0.96.0] - 2026-07-05
 
 ### Added
